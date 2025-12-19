@@ -461,35 +461,135 @@ auracast_assistant/
 └── pubspec.yaml
 ```
 
-### 4.2 AWS CDK インフラストラクチャ構造
+### 4.2 Terraform インフラストラクチャ構造
 
 ```
-infrastructure/
-├── bin/
-│   └── infrastructure.ts
-├── lib/
-│   ├── stacks/
-│   │   ├── api-stack.ts
-│   │   ├── database-stack.ts
-│   │   ├── auth-stack.ts
-│   │   └── analytics-stack.ts
-│   └── constructs/
-│       ├── lambda-api.ts
-│       └── dynamodb-table.ts
-├── lambda/
-│   ├── api/
-│   │   ├── broadcasts/
-│   │   │   ├── get.py
-│   │   │   ├── list.py
-│   │   │   └── create.py
-│   │   └── shared/
-│   │       └── db.py
-│   └── analytics/
-│       └── transform.py
-├── graphql/
-│   ├── schema.graphql
-│   └── resolvers/
-└── package.json
+terraform/
+├── main.tf                        # メインエントリポイント
+├── variables.tf                   # 変数定義
+├── outputs.tf                     # 出力値定義
+├── backend.tf                     # リモートステート設定
+│
+├── environments/                  # 環境別設定
+│   ├── dev/
+│   │   └── terraform.tfvars      # 開発環境変数
+│   └── prod/
+│       └── terraform.tfvars      # 本番環境変数
+│
+└── modules/                       # 再利用可能なモジュール
+    ├── auth/                      # Cognito User Pool, Identity Pool
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    │
+    ├── database/                  # DynamoDB Single-Table Design
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    │
+    ├── api/                       # API Gateway, Lambda Functions
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    │
+    ├── analytics/                 # Personalize, OpenSearch, Kinesis, EventBridge
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    │
+    ├── realtime/                  # ElastiCache, WebSocket API, AppSync
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    │
+    └── location/                  # Amazon Location Service
+        ├── main.tf
+        ├── variables.tf
+        └── outputs.tf
+```
+
+### 4.3 Terraform モジュール構成
+
+| モジュール | 主なリソース | 説明 |
+|-----------|-------------|------|
+| auth | Cognito User Pool, Identity Pool, OAuth Providers | ユーザー認証・認可 |
+| database | DynamoDB Tables (5 GSI), Streams | データ永続化 |
+| api | API Gateway, Lambda, CloudWatch Logs | REST API エンドポイント |
+| analytics | Kinesis, OpenSearch, EventBridge, S3 | 分析・ML基盤 |
+| realtime | ElastiCache Redis, WebSocket API, AppSync | リアルタイム通信 |
+| location | Place Index, Map, Geofence, Tracker | 位置情報サービス |
+
+### 4.4 Terraform デプロイ手順
+
+```bash
+# 1. 初期化
+cd terraform
+terraform init
+
+# 2. 開発環境へのデプロイ
+terraform plan -var-file="environments/dev/terraform.tfvars"
+terraform apply -var-file="environments/dev/terraform.tfvars"
+
+# 3. 出力値の取得（Flutter設定用）
+terraform output flutter_amplify_config
+
+# 4. 本番環境へのデプロイ
+terraform plan -var-file="environments/prod/terraform.tfvars"
+terraform apply -var-file="environments/prod/terraform.tfvars"
+```
+
+### 4.5 環境変数（OAuth設定）
+
+```bash
+# Google OAuth
+export TF_VAR_google_client_id="your-google-client-id"
+export TF_VAR_google_client_secret="your-google-client-secret"
+
+# Apple Sign In
+export TF_VAR_apple_client_id="your-apple-service-id"
+export TF_VAR_apple_team_id="your-apple-team-id"
+export TF_VAR_apple_key_id="your-apple-key-id"
+export TF_VAR_apple_private_key="-----BEGIN PRIVATE KEY-----..."
+```
+
+### 4.6 Lambda関数ディレクトリ構造
+
+```
+lambda/
+├── users/
+│   ├── post_confirmation.py      # Cognito Post Confirmation Trigger
+│   ├── get_profile.py            # GET /users/me
+│   └── update_profile.py         # PUT /users/me
+│
+├── broadcasts/
+│   ├── list.py                   # GET /broadcasts
+│   ├── get.py                    # GET /broadcasts/{id}
+│   └── nearby.py                 # GET /broadcasts/nearby
+│
+├── reviews/
+│   ├── create_review.py          # POST /reviews
+│   ├── analyze_sentiment.py      # EventBridge trigger
+│   └── aggregate_ratings.py      # Rating aggregation
+│
+├── recommendations/
+│   ├── get_recommendations.py    # GET /recommendations
+│   └── record_event.py           # POST /events
+│
+├── listeners/
+│   ├── websocket_connect.py      # $connect
+│   ├── websocket_disconnect.py   # $disconnect
+│   ├── join_broadcast.py         # joinBroadcast action
+│   └── aggregate_stats.py        # CloudWatch Events trigger
+│
+├── geo/
+│   ├── geohash_utils.py          # Geohash utilities
+│   ├── register_location.py      # PUT /broadcasts/{id}/location
+│   └── search_nearby.py          # GET /broadcasts/nearby
+│
+└── shared/
+    ├── db.py                     # DynamoDB utilities
+    ├── auth.py                   # Authentication utilities
+    └── response.py               # API response helpers
 ```
 
 ---
