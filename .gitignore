@@ -1,0 +1,40 @@
+# Flutter
+app/build/
+app/.dart_tool/
+app/.packages
+app/.pub-cache/
+app/.pub/
+app/pubspec.lock
+
+# Android
+app/android/.gradle/
+app/android/app/build/
+app/android/local.properties
+*.apk
+*.aab
+
+# iOS
+app/ios/Pods/
+app/ios/.symlinks/
+app/ios/Flutter/Flutter.framework
+app/ios/Flutter/Flutter.podspec
+app/ios/Flutter/App.framework
+
+# Cloud / CDK
+cloud/node_modules/
+cloud/cdk.out/
+cloud/*.js
+cloud/*.d.ts
+!cloud/jest.config.js
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# DevBox
+.devbox/
+
+# OS
+.DS_Store
+Thumbs.db

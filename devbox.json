@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.14.0/.schema/devbox.schema.json",
+  "packages": [
+    "flutter@latest",
+    "jdk17@latest"
+  ],
+  "shell": {
+    "init_hook": [
+      "echo 'Auracast Hub Development Environment'",
+      "flutter --version"
+    ],
+    "scripts": {}
+  }
+}
