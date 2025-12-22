@@ -1,47 +1,59 @@
 # Auracast Hub
 
-Bluetooth LE Audio (Auracast) ブロードキャストを検出・接続するための Flutter Android アプリケーション。
+A Flutter Android application for detecting and connecting to Bluetooth LE Audio (Auracast) broadcasts.
 
-## 機能
+## Features
 
-- AWS Cognito によるユーザー認証（サインアップ、ログイン、パスワードリセット）
-- Auracast ブロードキャストのスキャン・検出
-- ブロードキャスト情報の表示（名前、ID、信号強度、暗号化状態）
-- BASS (Broadcast Audio Scan Service) を使用した接続制御（開発中）
+- User authentication with AWS Cognito (sign up, login, password reset)
+- Scanning and detecting Auracast broadcasts
+- Displaying broadcast information (name, ID, signal strength, encryption status)
+- Connection control using BASS (Broadcast Audio Scan Service) (in development)
 
-## 必要要件
+## Requirements
 
-- **Android 13 (API 33) 以上** - LE Audio サポートに必須
-- LE Audio 対応の Bluetooth ハードウェア
-- [Devbox](https://www.jetify.com/devbox) - 開発環境管理（Flutter SDK、JDK 17、Android SDK ツールを自動インストール）
-- Terraform 1.0.0 以上（AWS インフラ構築用）
-- AWS CLI（設定済み）
+- **Android 13 (API 33) or higher** - Required for LE Audio support
+- Bluetooth hardware with LE Audio support
+- [Devbox](https://www.jetify.com/devbox) - Development environment management (auto-installs Flutter SDK, JDK 17)
+- Android SDK (install via Android Studio)
+- Terraform 1.0.0 or higher (for AWS infrastructure)
+- AWS CLI (configured)
 
-## 開発環境セットアップ
+## Development Environment Setup
 
-このプロジェクトは **Devbox** を使用して開発環境を管理しています。
+This project uses **Devbox** to manage the development environment.
 
 ```bash
-# Devbox がインストールされていない場合
+# If Devbox is not installed
 curl -fsSL https://get.jetify.com/devbox | bash
 
-# 開発環境に入る（Flutter SDK、JDK 17 が自動でセットアップされます）
+# Enter the development environment (Flutter SDK and JDK 17 are automatically set up)
 devbox shell
 ```
 
-> **Note**: 以降のコマンドはすべて `devbox shell` 内で実行するか、`devbox run -- <コマンド>` 形式で実行してください。
+> **Note**: All subsequent commands should be run inside `devbox shell` or using the `devbox run -- <command>` format.
 
-## AWS インフラ構築
+### Android SDK Setup
 
-### 1. Terraform 設定
+1. Install [Android Studio](https://developer.android.com/studio)
+2. Set up SDK in Android Studio (automatic on first launch)
+3. Install cmdline-tools:
+   ```bash
+   sdkmanager "cmdline-tools;latest"
+   ```
+
+The devbox shell automatically sets the `ANDROID_HOME` environment variable and adds `sdkmanager`, `avdmanager`, and `emulator` commands to PATH.
+
+## AWS Infrastructure Setup
+
+### 1. Terraform Configuration
 
 ```bash
 cd infrastructure/terraform
 cp terraform.tfvars.example terraform.tfvars
-# terraform.tfvars を編集して設定
+# Edit terraform.tfvars with your settings
 ```
 
-### 2. インフラデプロイ
+### 2. Deploy Infrastructure
 
 ```bash
 terraform init
@@ -49,15 +61,15 @@ terraform plan
 terraform apply
 ```
 
-### 3. Flutter アプリへの設定反映
+### 3. Configure Flutter App
 
-デプロイ後、出力値を取得して `app/lib/amplifyconfiguration.dart` を更新:
+After deployment, retrieve the output values and update `app/lib/amplifyconfiguration.dart`:
 
 ```bash
 terraform output flutter_amplify_config
 ```
 
-出力例:
+Example output:
 ```
 {
   "identityPoolId" = "ap-northeast-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
@@ -67,40 +79,36 @@ terraform output flutter_amplify_config
 }
 ```
 
-この値を `amplifyconfiguration.dart` の該当箇所に設定してください。
+Set these values in the corresponding fields in `amplifyconfiguration.dart`.
 
-## ビルド方法
+## Build
 
-### 依存関係のインストール
+### Install Dependencies
 
 ```bash
-# devbox shell 内で実行
 cd app
 flutter pub get
-
-# または devbox run を使用
-devbox run -- bash -c "cd app && flutter pub get"
 ```
 
-### 静的解析
+### Static Analysis
 
 ```bash
 cd app
 flutter analyze
 ```
 
-### テスト実行
+### Run Tests
 
 ```bash
 cd app
-# 全テスト実行
+# Run all tests
 flutter test
 
-# 特定のテスト実行
+# Run specific test
 flutter test test/widget_test.dart
 ```
 
-## APK 作成方法
+## Building APK
 
 ### Debug APK
 
@@ -109,7 +117,7 @@ cd app
 flutter build apk --debug
 ```
 
-出力先: `app/build/app/outputs/flutter-apk/app-debug.apk`
+Output: `app/build/app/outputs/flutter-apk/app-debug.apk`
 
 ### Release APK
 
@@ -118,180 +126,184 @@ cd app
 flutter build apk --release
 ```
 
-出力先: `app/build/app/outputs/flutter-apk/app-release.apk`
+Output: `app/build/app/outputs/flutter-apk/app-release.apk`
 
-### Split APK（ABI別）
+### Split APK (per ABI)
 
 ```bash
 cd app
 flutter build apk --split-per-abi
 ```
 
-出力先:
+Output:
 - `app-armeabi-v7a-release.apk` (32-bit ARM)
 - `app-arm64-v8a-release.apk` (64-bit ARM)
 - `app-x86_64-release.apk` (x86_64)
 
-### App Bundle（Google Play 用）
+### App Bundle (for Google Play)
 
 ```bash
 cd app
 flutter build appbundle
 ```
 
-出力先: `app/build/app/outputs/bundle/release/app-release.aab`
+Output: `app/build/app/outputs/bundle/release/app-release.aab`
 
-## エミュレーター実行方法
+## Running on Emulator
 
-### 1. エミュレーターの作成
+### 1. Create Emulator
 
-Android Studio を使用:
-1. Tools → Device Manager を開く
-2. "Create Device" をクリック
-3. デバイスを選択（Pixel 6 推奨）
-4. システムイメージで **API 33 以上** を選択
-5. "Finish" をクリック
+Using Android Studio:
+1. Open Tools → Device Manager
+2. Click "Create Device"
+3. Select a device (Pixel 6 recommended)
+4. Select system image with **API 33 or higher**
+5. Click "Finish"
 
-コマンドラインを使用:
+Using command line:
 ```bash
-# 利用可能なシステムイメージを確認
+# Check available system images
 sdkmanager --list | grep "system-images"
 
-# システムイメージをダウンロード
-sdkmanager "system-images;android-33;google_apis;x86_64"
+# Download system image
+# For Apple Silicon Mac, use arm64-v8a
+sdkmanager "system-images;android-33;google_apis;arm64-v8a"
 
-# AVD を作成
-avdmanager create avd -n Pixel6_API33 -k "system-images;android-33;google_apis;x86_64" -d "pixel_6"
+# For Intel Mac / Linux, use x86_64
+# sdkmanager "system-images;android-33;google_apis;x86_64"
+
+# Create AVD (match the system image you downloaded)
+avdmanager create avd -n Pixel6_API33 -k "system-images;android-33;google_apis;arm64-v8a" -d "pixel_6"
 ```
 
-### 2. エミュレーターの起動
+### 2. Launch Emulator
 
 ```bash
-# エミュレーター一覧を確認
+# List available emulators
 flutter emulators
 
-# エミュレーターを起動
+# Launch emulator
 flutter emulators --launch Pixel6_API33
 
-# または直接起動
+# Or launch directly
 emulator -avd Pixel6_API33
 ```
 
-### 3. アプリ実行
+### 3. Run App
 
 ```bash
 cd app
 flutter run
 ```
 
-> **注意**: エミュレーターでは実際の Bluetooth LE Audio 機能は動作しません。UI の確認のみ可能です。
+> **Note**: Actual Bluetooth LE Audio functionality does not work on emulators. Only UI verification is possible.
 
-## USB 接続デバイスでの実行方法
+## Running on USB-Connected Device
 
-### 1. デバイスの準備
+### 1. Prepare Device
 
-1. Android デバイスで **開発者向けオプション** を有効にする
-   - 設定 → デバイス情報 → ビルド番号を7回タップ
-2. **USB デバッグ** を有効にする
-   - 設定 → 開発者向けオプション → USB デバッグ
-3. USB ケーブルでPCに接続
-4. デバイスに表示される「USB デバッグを許可しますか？」で「許可」を選択
+1. Enable **Developer Options** on your Android device
+   - Settings → About phone → Tap Build number 7 times
+2. Enable **USB Debugging**
+   - Settings → Developer options → USB debugging
+3. Connect to PC via USB cable
+4. Select "Allow" when prompted "Allow USB debugging?" on the device
 
-### 2. 接続確認
+### 2. Verify Connection
 
 ```bash
-# 接続デバイスを確認
+# Check connected devices
 flutter devices
 
-# 出力例:
+# Example output:
 # RQ8M802XXXX (mobile) • RQ8M802XXXX • android-arm64 • Android 14 (API 34)
 ```
 
-または adb で確認:
+Or verify with adb:
 ```bash
 adb devices
 ```
 
-### 3. アプリ実行
+### 3. Run App
 
 ```bash
 cd app
 
-# デバイスが1台の場合
+# If only one device is connected
 flutter run
 
-# 複数デバイスがある場合、デバイスIDを指定
+# If multiple devices are connected, specify device ID
 flutter run -d RQ8M802XXXX
 ```
 
-### 4. リリースモードで実行
+### 4. Run in Release Mode
 
 ```bash
 cd app
 flutter run --release
 ```
 
-### 5. ホットリロード / ホットリスタート
+### 5. Hot Reload / Hot Restart
 
-アプリ実行中:
-- `r` キー: ホットリロード（状態を保持して再描画）
-- `R` キー: ホットリスタート（アプリを再起動）
-- `q` キー: 終了
+While app is running:
+- `r` key: Hot reload (redraw while preserving state)
+- `R` key: Hot restart (restart app)
+- `q` key: Quit
 
-## APK のインストール
+## Installing APK
 
-### adb を使用
+### Using adb
 
 ```bash
-# Debug APK をインストール
+# Install debug APK
 adb install app/build/app/outputs/flutter-apk/app-debug.apk
 
-# 既存アプリを上書きインストール
+# Reinstall over existing app
 adb install -r app/build/app/outputs/flutter-apk/app-debug.apk
 ```
 
-### flutter install を使用
+### Using flutter install
 
 ```bash
 cd app
 flutter install
 ```
 
-## トラブルシューティング
+## Troubleshooting
 
-### Devbox 環境の問題
+### Devbox Environment Issues
 
 ```bash
-# Devbox 環境を再構築
+# Rebuild Devbox environment
 devbox rm
 devbox install
 
-# または shell に再入
+# Or re-enter shell
 exit
 devbox shell
 ```
 
-### デバイスが認識されない
+### Device Not Recognized
 
 ```bash
-# adb サーバーを再起動
+# Restart adb server
 adb kill-server
 adb start-server
 adb devices
 ```
 
-### Bluetooth 権限エラー
+### Bluetooth Permission Error
 
-アプリ初回起動時に Bluetooth 権限を許可してください:
+Grant Bluetooth permissions when prompted on first app launch:
 - `BLUETOOTH_SCAN`
 - `BLUETOOTH_CONNECT`
 
-### LE Audio 非対応エラー
+### LE Audio Not Supported Error
 
-- Android 13 以上のデバイスを使用してください
-- 一部のデバイスはハードウェアが LE Audio に対応していません
+- Use a device with Android 13 or higher
+- Some devices do not have hardware support for LE Audio
 
-### ビルドエラー
+### Build Error
 
 ```bash
 cd app
@@ -300,49 +312,49 @@ flutter pub get
 flutter run
 ```
 
-## プロジェクト構成
+## Project Structure
 
 ```
 Auracast-Hub/
-├── app/                          # Flutter アプリケーション
-│   ├── android/                  # Android ネイティブコード
+├── app/                          # Flutter application
+│   ├── android/                  # Android native code
 │   │   └── app/src/main/kotlin/
 │   │       └── com/auracast/auracast_hub/
-│   │           ├── AuracastPlugin.kt      # Flutter プラグイン
+│   │           ├── AuracastPlugin.kt      # Flutter plugin
 │   │           ├── MainActivity.kt
 │   │           └── bluetooth/
-│   │               ├── AuracastScanner.kt # BLE スキャナー
-│   │               └── BluetoothUuids.kt  # UUID 定数
-│   ├── lib/                      # Dart コード
-│   │   ├── main.dart             # アプリエントリーポイント
-│   │   ├── amplifyconfiguration.dart  # Cognito 設定
+│   │               ├── AuracastScanner.kt # BLE scanner
+│   │               └── BluetoothUuids.kt  # UUID constants
+│   ├── lib/                      # Dart code
+│   │   ├── main.dart             # App entry point
+│   │   ├── amplifyconfiguration.dart  # Cognito configuration
 │   │   ├── screens/
-│   │   │   ├── auth/             # 認証画面
+│   │   │   ├── auth/             # Authentication screens
 │   │   │   │   ├── login_screen.dart
 │   │   │   │   ├── signup_screen.dart
 │   │   │   │   ├── confirm_signup_screen.dart
 │   │   │   │   └── reset_password_screen.dart
 │   │   │   └── broadcast_list_screen.dart
 │   │   └── services/
-│   │       ├── auracast_service.dart  # BLE サービス
-│   │       └── auth_service.dart      # 認証サービス
+│   │       ├── auracast_service.dart  # BLE service
+│   │       └── auth_service.dart      # Authentication service
 │   ├── test/
 │   └── pubspec.yaml
-├── infrastructure/               # AWS インフラ
+├── infrastructure/               # AWS infrastructure
 │   ├── terraform/
-│   │   ├── provider.tf           # AWS プロバイダー設定
-│   │   ├── variables.tf          # 変数定義
-│   │   ├── cognito.tf            # Cognito リソース
-│   │   ├── outputs.tf            # 出力値
+│   │   ├── provider.tf           # AWS provider configuration
+│   │   ├── variables.tf          # Variable definitions
+│   │   ├── cognito.tf            # Cognito resources
+│   │   ├── outputs.tf            # Output values
 │   │   └── terraform.tfvars.example
 │   └── README.md
-├── devbox.json                   # Devbox 開発環境設定（Flutter, JDK 17, Android SDK Tools）
-├── devbox.lock                   # Devbox 依存関係ロックファイル
-├── request.md                    # 技術仕様書
-├── CLAUDE.md                     # Claude Code 用ガイド
+├── devbox.json                   # Devbox environment configuration (Flutter, JDK 17)
+├── devbox.lock                   # Devbox dependency lock file
+├── request.md                    # Technical specification
+├── CLAUDE.md                     # Claude Code guide
 └── README.md
 ```
 
-## ライセンス
+## License
 
 MIT License

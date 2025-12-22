@@ -2,11 +2,13 @@
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.14.0/.schema/devbox.schema.json",
   "packages": [
     "flutter@latest",
-    "jdk17@latest",
-    "android-studio-tools@latest"
+    "jdk17@latest"
   ],
   "shell": {
     "init_hook": [
+      "if [ -z \"$ANDROID_HOME\" ]; then if [ -d \"$HOME/Library/Android/sdk\" ]; then export ANDROID_HOME=\"$HOME/Library/Android/sdk\"; elif [ -d \"$HOME/Android/Sdk\" ]; then export ANDROID_HOME=\"$HOME/Android/Sdk\"; fi; fi",
+      "export ANDROID_SDK_ROOT=\"$ANDROID_HOME\"",
+      "export PATH=\"$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH\"",
       "echo 'Auracast Hub Development Environment'",
       "flutter --version"
     ],
