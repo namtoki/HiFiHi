@@ -1,12 +1,13 @@
-# Auracast Assistant + AWSバックエンド開発設計書 v4
+# Auracast Assistant + AWSバックエンド開発設計書 v5
 
-Flutter（**iOS優先**）でAuracast Assistantアプリを開発し、AWSバックエンド（東京リージョン ap-northeast-1）と連携するプロジェクトの包括的な技術設計ドキュメントです。
+FlutterでAuracast Assistantアプリを開発し、AWSバックエンド（東京リージョン ap-northeast-1）と連携するプロジェクトの包括的な技術設計ドキュメントです。
 
 **本ドキュメントのアプローチ**:
-- **iOS**: CoreBluetooth経由でBASSサービスに直接アクセスし、**Non-Scanning Assistant**アーキテクチャでフル機能を実現
-- **Android**: System API制限によりAuracast接続制御は不可。スキャン＋手動接続ガイドのみ提供
+- **iOS/Android共通**: 標準GATT API経由でBASSサービスに直接アクセスし、**Non-Scanning Assistant**アーキテクチャでフル機能を実現
 
-> 📱 **iOS優先の理由**: iOSのCoreBluetooth APIはBASSへのアクセスを制限していないため、サードパーティアプリでもAuracast Assistant機能を完全実装可能。Android 13以降はBASSが@SystemApiとなり、一般アプリからの接続制御は不可能。
+> 🔍 **重要な発見**: `@SystemApi`制限は高レベルAPI（`BluetoothLeBroadcastAssistant`）に適用されますが、
+> **標準GATT API（`BluetoothGatt.writeCharacteristic()`）は制限されていません**。
+> iOS（CoreBluetooth）とAndroid（BluetoothGatt）の両方で同等のフル機能実装が可能です（Androidは要実機検証）。
 
 ---
 
@@ -23,17 +24,18 @@ Flutter（**iOS優先**）でAuracast Assistantアプリを開発し、AWSバッ
 │ │ + Cupertino  │  │              │  │              │  │              │  │              │          │
 │ └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘          │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ iOS NATIVE (Swift) ★ 主軸プラットフォーム                                                           │
+│ iOS NATIVE (Swift)                                                                                 │
 │ ┌───────────────────────────────────────────────────────────────────────────────────────────────┐  │
 │ │  CoreBluetooth      │  BASS GATT Client   │  Non-Scanning      │  CoreLocation           │  │
 │ │  CBCentralManager   │  Read/Write/Notify  │  Assistant         │  位置情報取得            │  │
 │ │  CBPeripheral       │  Control Point操作  │  アーキテクチャ    │                          │  │
 │ └───────────────────────────────────────────────────────────────────────────────────────────────┘  │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ ANDROID NATIVE (Kotlin) ※ 制限付きサポート                                                         │
+│ ANDROID NATIVE (Kotlin) ★ GATT直接操作でフル機能実装可能（要実機検証）                              │
 │ ┌───────────────────────────────────────────────────────────────────────────────────────────────┐  │
-│ │  BluetoothLeScanner    │  GATT Client (Read Only) │  手動接続ガイド   │  Location Services   │  │
-│ │  Broadcast Discovery   │  ❌ Write制限 (SystemAPI)│  表示のみ         │  GPS/Network位置取得 │  │
+│ │  BluetoothLeScanner    │  BluetoothGatt         │  Non-Scanning      │  Location Services   │  │
+│ │  Extended ADVスキャン  │  ✅ Read/Write/Notify  │  Assistant         │  GPS/Network位置取得 │  │
+│ │  ★ iOSより優位        │  Control Point操作     │  アーキテクチャ    │                      │  │
 │ └───────────────────────────────────────────────────────────────────────────────────────────────┘  │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ AWS BACKEND (ap-northeast-1) - データプレーン                                                       │
@@ -102,68 +104,71 @@ Flutter（**iOS優先**）でAuracast Assistantアプリを開発し、AWSバッ
 
 ### 1.1 プラットフォーム別API制約と戦略
 
-iOS/Androidで**Auracast Assistant機能の実現可能性が大きく異なる**ことが判明しました。
+**重要な発見**: `@SystemApi`制限は高レベルAPI（BluetoothLeBroadcastAssistant）に適用されますが、
+**標準GATT API（BluetoothGatt）経由のBASS操作は制限されていません**。
+iOS/Android両方で**Non-Scanning Assistant**のフル機能実装が可能です。
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    プラットフォーム別 BASS API アクセス状況                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  プラットフォーム          BASSアクセス           対応状況                   │
-│  ─────────────────────────────────────────────────────────────────────────  │
-│  iOS (CoreBluetooth)      制限なし ✅             フル機能実装可能          │
-│  Android 13+              @SystemApi ❌           読み取りのみ              │
-│  Samsung One UI 6.1+      システムアプリ内蔵      Galaxy限定                │
-│  Pixel Android 16         システムアプリ内蔵      Pixel 8/9限定             │
+│  @SystemApi制限の正確な範囲:                                                 │
+│  ────────────────────────────                                               │
+│  ❌ BluetoothLeBroadcastAssistant (Android高レベルAPI) → 制限あり           │
+│  ✅ BluetoothGatt.writeCharacteristic() (標準GATT) → 制限なし              │
+│  ✅ CoreBluetooth (iOS標準GATT) → 制限なし                                  │
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ★ iOS (CoreBluetooth) - 主軸プラットフォーム                               │
+│  ★ 両プラットフォームで同等の機能が実現可能                                   │
 │  ─────────────────────────────────────────────                              │
 │                                                                             │
-│  │ 操作                              │ 可否     │ 備考                    │
-│  ├──────────────────────────────────┼─────────┼─────────────────────────┤ │
-│  │ BASS Service発見                 │ ✅ 可能  │ CBPeripheral経由        │ │
-│  │ Broadcast Receive State Read     │ ✅ 可能  │ 再生中ソース検出        │ │
-│  │ Broadcast Receive State Notify   │ ✅ 可能  │ リアルタイム監視        │ │
-│  │ BASS Control Point Write         │ ✅ 可能  │ ★ Add/Remove Source    │ │
-│  │ QRコード経由接続                  │ ✅ 可能  │ Broadcast Audio URI     │ │
-│  └──────────────────────────────────┴─────────┴─────────────────────────┘ │
+│  │ 操作                              │ iOS        │ Android     │ 方式    │
+│  ├──────────────────────────────────┼───────────┼────────────┼─────────┤│
+│  │ BASS Service発見                 │ ✅ 可能    │ ✅ 可能    │ GATT    ││
+│  │ Broadcast Receive State Read     │ ✅ 可能    │ ✅ 可能    │ GATT    ││
+│  │ Broadcast Receive State Notify   │ ✅ 可能    │ ✅ 可能    │ GATT    ││
+│  │ BASS Control Point Write         │ ✅ 可能    │ ✅ 可能※   │ GATT    ││
+│  │ Extended ADV スキャン            │ ❌ 不可    │ ✅ 可能    │ Scanner ││
+│  └──────────────────────────────────┴───────────┴────────────┴─────────┘│
 │                                                                             │
-│  ※ Android (BluetoothGatt) - 制限付きサポート                               │
-│  ─────────────────────────────────────────────                              │
+│  ※ Android: BluetoothGatt経由の直接Write（要実機検証）                       │
 │                                                                             │
-│  │ 操作                              │ 可否     │ 備考                    │
-│  ├──────────────────────────────────┼─────────┼─────────────────────────┤ │
-│  │ Extended ADV スキャン             │ ✅ 可能  │ BluetoothLeScanner     │ │
-│  │ BASS Service発見                 │ ⚠️ 50%   │ デバイス依存            │ │
-│  │ Broadcast Receive State Read     │ ⚠️ 70%   │ ペアリング済み前提       │ │
-│  │ BASS Control Point Write         │ ❌ 不可  │ @SystemApi制限          │ │
-│  └──────────────────────────────────┴─────────┴─────────────────────────┘ │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  検証が必要なポイント:                                                       │
+│  ──────────────────────                                                     │
+│  ・TWS側がサードパーティアプリからのGATT Writeを受け入れるか                   │
+│  ・ペアリング/ボンディング要件                                               │
+│  ・暗号化接続の要否                                                          │
+│  ・実際のAiroha/Qualcomm TWS での動作確認                                    │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 本設計のアプローチ：Non-Scanning Assistant (iOS)
+### 1.2 本設計のアプローチ：Non-Scanning Assistant (iOS/Android共通)
 
 **Non-Scanning Assistant**は、Bluetooth SIGが「Legacy Smartphone向け」として定義したアーキテクチャです。
 スマートフォン自身がAuracast放送をスキャンするのではなく、**受信デバイス（TWS/補聴器）側にスキャンを委任**します。
 
+**iOS/Android両方で同一アーキテクチャが実現可能**であることが判明しました（標準GATT API使用）。
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│              Non-Scanning Assistant アーキテクチャ (iOS)                    │
+│              Non-Scanning Assistant アーキテクチャ (iOS/Android)            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │   利点:                                                                     │
 │   ────                                                                      │
 │   ・Bluetooth 5.2以降のLE Audioハードウェア不要                             │
-│   ・標準BLE GATT操作のみで実装可能                                          │
-│   ・過去10年間のiPhone全モデルで動作可能                                     │
+│   ・標準BLE GATT操作のみで実装可能（iOS: CoreBluetooth / Android: BluetoothGatt）│
+│   ・iOS: 過去10年間の全モデルで動作 / Android: BLE対応端末で動作            │
 │                                                                             │
 │   ┌─────────────────────────────────────────────────────────────────────┐  │
 │   │                                                                     │  │
-│   │     Auracast              TWS/補聴器            iPhone App          │  │
-│   │     Broadcast              (Sink)             (Assistant)           │  │
+│   │     Auracast              TWS/補聴器          スマホアプリ          │  │
+│   │     Broadcast              (Sink)           (Assistant)             │  │
 │   │   ┌──────────┐          ┌──────────┐          ┌──────────┐         │  │
 │   │   │ Extended │ ──────▶ │ 1.スキャン│          │          │         │  │
 │   │   │   ADV    │          │  & 格納  │          │          │         │  │
@@ -191,7 +196,7 @@ iOS/Androidで**Auracast Assistant機能の実現可能性が大きく異なる*
 │   処理フロー:                                                                │
 │   ─────────────                                                             │
 │   1. TWS/補聴器がAuracast放送をスキャンし、Broadcast Receive Stateに格納    │
-│   2. iPhoneアプリがTWS/補聴器にGATT接続                                     │
+│   2. スマホアプリがTWS/補聴器にGATT接続                                     │
 │   3. Broadcast Receive State (0x2BC8) を読み取り、発見された放送一覧を表示  │
 │   4. ユーザーが選択 → Control Point (0x2BC7) にAdd Source書き込み          │
 │   5. TWS/補聴器がPA Sync → BIG Sync → 音声再生開始                          │
@@ -228,40 +233,56 @@ QK Assistantの実績から、**BASS準拠であれば特定メーカーに依�
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.4 Android向けフォールバック戦略
+### 1.4 Android実装戦略（GATT直接操作）
 
-AndroidではBASS Control Point書き込みが制限されているため、**読み取り専用**のアプローチを採用します。
+**新発見**: `@SystemApi`制限は`BluetoothLeBroadcastAssistant`クラスに適用されますが、
+**標準の`BluetoothGatt` APIは制限されていません**。iOSと同様のフル機能実装が可能です。
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Android向け機能（制限付き）                               │
+│                    Android実装アプローチ（GATT直接操作）                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ✅ 実現可能な機能                                                          │
-│  ─────────────────                                                          │
-│  ・Extended ADVスキャンでAuracast放送一覧を表示                             │
-│  ・BASS Receive State読み取りで再生中チャンネルを検出（成功率: 35%）        │
-│  ・位置情報と組み合わせた施設・イベント情報表示                              │
-│  ・レビュー・評価機能                                                       │
+│  実装方式の比較:                                                             │
+│  ──────────────                                                             │
 │                                                                             │
-│  ❌ 実現不可能な機能                                                        │
-│  ─────────────────                                                          │
-│  ・アプリからのAuracast接続制御                                             │
-│  ・ワンタップ接続                                                           │
+│  │ 方式                             │ 状態     │ 備考                     │
+│  ├─────────────────────────────────┼──────────┼──────────────────────────┤│
+│  │ BluetoothLeBroadcastAssistant   │ ❌ 制限  │ @SystemApi (Android 13+) ││
+│  │ BluetoothGatt.writeCharacteristic│ ✅ 公開  │ 標準GATT API             ││
+│  └─────────────────────────────────┴──────────┴──────────────────────────┘│
 │                                                                             │
-│  ユーザーへのガイド                                                         │
-│  ─────────────────                                                          │
+│  BluetoothGatt経由で実現可能な機能:                                          │
+│  ────────────────────────────────────                                       │
+│  ✅ BASS Service発見 (UUID: 0x184F)                                         │
+│  ✅ Broadcast Receive State Read/Notify (UUID: 0x2BC8)                       │
+│  ✅ BASS Control Point Write (UUID: 0x2BC7) ← ★ Add/Remove Source          │
+│  ✅ Extended ADVスキャン (BluetoothLeScanner)                                │
+│                                                                             │
+│  Androidの追加メリット:                                                      │
+│  ─────────────────────                                                      │
+│  ・Extended Advertisingスキャンが可能（iOSでは不可）                         │
+│  ・TWS側のスキャン結果に依存せず、アプリ側で放送を発見可能                    │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  実機検証が必要なポイント:                                                   │
+│  ────────────────────────                                                   │
+│  ・TWS/補聴器がサードパーティアプリからのGATT Writeを受け入れるか             │
+│  ・ボンディング（ペアリング）要件の確認                                       │
+│  ・暗号化接続（Encrypted Link）の要否                                        │
+│  ・Airoha / Qualcomm / BES チップ別の動作検証                                │
+│                                                                             │
+│  フォールバック戦略（GATT Writeが失敗した場合）:                              │
+│  ────────────────────────────────────────────                               │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  📱 Androidをお使いの方へ                                            │   │
+│  │  GATT Write失敗時の代替手段                                          │   │
 │  │                                                                      │   │
-│  │  このデバイスではAuracast接続はシステム設定から行う必要があります。    │   │
+│  │  1. システム設定への誘導                                              │   │
+│  │     設定 → Bluetooth → デバイス → 「放送を検索」                      │   │
 │  │                                                                      │   │
-│  │  手順:                                                               │   │
-│  │  1. 設定 → Bluetooth → ペアリング済みデバイス                        │   │
-│  │  2. イヤホン名をタップ → 「放送を検索」                              │   │
-│  │  3. 表示された放送を選択して接続                                      │   │
+│  │  2. QRコード/NFC経由の接続（施設側で提供）                            │   │
 │  │                                                                      │   │
-│  │  [設定を開く]                                                        │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -1219,10 +1240,11 @@ struct PairedDevice: Identifiable {
 
 ---
 
-### 5.B Android (Kotlin) 実装 - 読み取り専用モード
+### 5.B Android (Kotlin) 実装 - フル機能（GATT直接操作）
 
-> AndroidではBASS Control Point書き込みが`@SystemApi`制限されているため、
-> 読み取り専用のアプローチを採用します。接続制御はシステム設定画面から行います。
+> **更新**: `@SystemApi`制限は高レベルAPI（BluetoothLeBroadcastAssistant）に適用されますが、
+> **標準GATT API（BluetoothGatt）経由のBASS操作は制限されていません**。
+> iOSと同等のフル機能実装が可能です（要実機検証）。
 
 #### 5.B.1 Bluetooth UUIDs定義 (Android)
 
@@ -1369,11 +1391,11 @@ class ScanException(message: String) : Exception(message)
 
 #### 5.B.3 BASS GATT Manager (Android)
 
-> ⚠️ **重要な制約について**
+> ✅ **アップデート**: 標準GATT API経由のBASS操作は`@SystemApi`制限の対象外
 >
-> - **読み取り操作**: `receiveStates` の購読は動作する可能性が高い（成功率: 35-70%、デバイス依存）
-> - **書き込み操作**: `addSource()`, `removeSource()`, `setBroadcastCode()` は多くのデバイスで失敗する（成功率: 10-20%）
-> - **推奨用途**: 現在再生中のBroadcast IDを読み取り、スキャン結果と照合してチャンネル名を特定する
+> - **読み取り操作**: `receiveStates` の購読 → 動作予測: 高（成功率: 70-90%）
+> - **書き込み操作**: `addSource()`, `removeSource()` → 動作予測: 高（要実機検証）
+> - **成功の鍵**: ペアリング済みデバイス + 暗号化接続が必要な場合あり
 
 ```kotlin
 // bluetooth/BassGattManager.kt
