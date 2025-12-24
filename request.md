@@ -347,7 +347,440 @@ AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_EXCLUSIVE)
 
 ---
 
-## 7. 開発フェーズ
+## 7. AWSバックエンド
+
+### 7.1 アーキテクチャ概要
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       AWS バックエンドアーキテクチャ                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────┐                                                           │
+│  │   Flutter   │                                                           │
+│  │    App      │                                                           │
+│  └──────┬──────┘                                                           │
+│         │                                                                   │
+│         │ HTTPS                                                            │
+│         ▼                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                        Amazon API Gateway                            │   │
+│  │                         (REST API)                                   │   │
+│  └──────────────────────────────┬──────────────────────────────────────┘   │
+│                                 │                                           │
+│         ┌───────────────────────┼───────────────────────┐                  │
+│         │                       │                       │                  │
+│         ▼                       ▼                       ▼                  │
+│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐          │
+│  │   Lambda    │         │   Lambda    │         │   Lambda    │          │
+│  │  Settings   │         │    ML       │         │  Analytics  │          │
+│  │   CRUD      │         │ Inference   │         │  Collector  │          │
+│  └──────┬──────┘         └──────┬──────┘         └──────┬──────┘          │
+│         │                       │                       │                  │
+│         ▼                       ▼                       ▼                  │
+│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐          │
+│  │  DynamoDB   │         │  SageMaker  │         │ CloudWatch  │          │
+│  │  Settings   │         │  Endpoint   │         │    Logs     │          │
+│  └─────────────┘         └─────────────┘         └─────────────┘          │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                      Amazon Cognito                                  │   │
+│  │            User Pool + Identity Pool (実装済み)                      │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.2 既存実装（Cognito認証）
+
+現在、以下が Terraform で実装済み:
+
+```
+infrastructure/terraform/
+├── cognito.tf          # User Pool, Identity Pool, IAM Roles
+├── provider.tf         # AWS Provider (ap-northeast-1)
+├── variables.tf        # 設定変数
+└── outputs.tf          # 出力値
+```
+
+**Cognito 機能:**
+- Email/Password 認証
+- Google/Facebook/Apple ソーシャルログイン
+- MFA (TOTP)
+- パスワードリセット
+
+### 7.3 ユーザー設定ストレージ (DynamoDB)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      DynamoDB テーブル設計                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  【UserSettings テーブル】                                                   │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │ PK: userId (String)                                                  │  │
+│  │ SK: settingType (String)                                            │  │
+│  ├──────────────────────────────────────────────────────────────────────┤  │
+│  │ Attributes:                                                          │  │
+│  │   - data: Map (設定内容)                                             │  │
+│  │   - updatedAt: Number (Unix timestamp)                               │  │
+│  │   - version: Number (楽観的ロック用)                                 │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  【settingType の種類】                                                     │
+│  ├─ "profile"       : ユーザープロフィール                                 │
+│  ├─ "audio"         : オーディオ設定（バッファサイズ、コーデック等）        │
+│  ├─ "channel"       : チャンネル割り当て設定                               │
+│  ├─ "devices"       : 登録デバイス一覧                                     │
+│  └─ "preferences"   : UI設定、通知設定等                                   │
+│                                                                             │
+│  【DeviceProfiles テーブル】（ML用）                                        │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │ PK: deviceModel (String) - 例: "iPhone 15 Pro"                       │  │
+│  │ SK: osVersion (String) - 例: "17.2"                                  │  │
+│  ├──────────────────────────────────────────────────────────────────────┤  │
+│  │ Attributes:                                                          │  │
+│  │   - avgLatency: Number (平均遅延 ms)                                 │  │
+│  │   - latencyStdDev: Number (標準偏差)                                 │  │
+│  │   - sampleCount: Number (測定サンプル数)                             │  │
+│  │   - btLatencyProfile: Map (Bluetoothコーデック別遅延)                │  │
+│  │   - recommendedBuffer: Number (推奨バッファサイズ)                   │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.4 機械学習機能
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        ML 機能設計                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  【1. デバイス遅延予測モデル】                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │ 入力:                                                                │  │
+│  │   - デバイスモデル (iPhone 15 Pro, Pixel 8, etc.)                   │  │
+│  │   - OSバージョン                                                     │  │
+│  │   - Bluetoothコーデック (aptX, AAC, SBC, etc.)                      │  │
+│  │   - Wi-Fi信号強度                                                    │  │
+│  │                                                                      │  │
+│  │ 出力:                                                                │  │
+│  │   - 予測遅延 (ms)                                                    │  │
+│  │   - 推奨バッファサイズ (ms)                                          │  │
+│  │   - 信頼度スコア (0-1)                                               │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  【2. 遅延キャリブレーション自動化】                                        │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │ - ユーザーの実測データを収集                                         │  │
+│  │ - デバイスモデル別に集計                                             │  │
+│  │ - 新規ユーザーに最適な初期値を提供                                   │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  【3. UWB位置補正（Phase 2以降）】                                          │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │ - カルマンフィルタのパラメータ最適化                                 │  │
+│  │ - 環境ごとの位置誤差補正                                             │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  【実装方式】                                                               │
+│  ├─ Phase 1-2: Lambda + 統計的手法（平均、分散）                          │
+│  └─ Phase 3以降: SageMaker エンドポイント（本格MLモデル）                  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.5 API設計
+
+```yaml
+# API Gateway エンドポイント
+
+# ユーザー設定
+GET    /settings                    # 全設定取得
+GET    /settings/{type}             # 特定タイプの設定取得
+PUT    /settings/{type}             # 設定更新
+DELETE /settings/{type}             # 設定削除
+
+# デバイスプロファイル
+GET    /devices/profile             # 現在のデバイスの推奨設定取得
+POST   /devices/calibration         # キャリブレーション結果送信
+
+# ML推論
+POST   /ml/predict-latency          # 遅延予測
+POST   /ml/optimize-buffer          # バッファサイズ最適化
+
+# セッション管理
+POST   /sessions                    # セッション作成
+GET    /sessions/{id}               # セッション情報取得
+PUT    /sessions/{id}               # セッション更新
+DELETE /sessions/{id}               # セッション終了
+
+# 分析・テレメトリ
+POST   /analytics/event             # イベント送信（バッチ対応）
+```
+
+### 7.6 Terraform 追加リソース
+
+```hcl
+# infrastructure/terraform/dynamodb.tf
+
+resource "aws_dynamodb_table" "user_settings" {
+  name           = "${var.app_name}-${var.environment}-user-settings"
+  billing_mode   = "PAY_PER_REQUEST"
+  hash_key       = "userId"
+  range_key      = "settingType"
+
+  attribute {
+    name = "userId"
+    type = "S"
+  }
+
+  attribute {
+    name = "settingType"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = var.environment == "prod"
+  }
+
+  tags = {
+    Name = "${var.app_name}-${var.environment}-user-settings"
+  }
+}
+
+resource "aws_dynamodb_table" "device_profiles" {
+  name           = "${var.app_name}-${var.environment}-device-profiles"
+  billing_mode   = "PAY_PER_REQUEST"
+  hash_key       = "deviceModel"
+  range_key      = "osVersion"
+
+  attribute {
+    name = "deviceModel"
+    type = "S"
+  }
+
+  attribute {
+    name = "osVersion"
+    type = "S"
+  }
+
+  tags = {
+    Name = "${var.app_name}-${var.environment}-device-profiles"
+  }
+}
+```
+
+```hcl
+# infrastructure/terraform/api_gateway.tf
+
+resource "aws_apigatewayv2_api" "main" {
+  name          = "${var.app_name}-${var.environment}-api"
+  protocol_type = "HTTP"
+
+  cors_configuration {
+    allow_origins = ["*"]
+    allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    allow_headers = ["Content-Type", "Authorization"]
+    max_age       = 86400
+  }
+}
+
+resource "aws_apigatewayv2_authorizer" "cognito" {
+  api_id           = aws_apigatewayv2_api.main.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "cognito-authorizer"
+
+  jwt_configuration {
+    audience = [aws_cognito_user_pool_client.mobile_client.id]
+    issuer   = "https://${aws_cognito_user_pool.main.endpoint}"
+  }
+}
+```
+
+```hcl
+# infrastructure/terraform/lambda.tf
+
+resource "aws_lambda_function" "settings_handler" {
+  filename         = data.archive_file.lambda_settings.output_path
+  function_name    = "${var.app_name}-${var.environment}-settings"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  source_code_hash = data.archive_file.lambda_settings.output_base64sha256
+  timeout          = 30
+  memory_size      = 256
+
+  environment {
+    variables = {
+      SETTINGS_TABLE = aws_dynamodb_table.user_settings.name
+      DEVICES_TABLE  = aws_dynamodb_table.device_profiles.name
+    }
+  }
+
+  tags = {
+    Name = "${var.app_name}-${var.environment}-settings"
+  }
+}
+
+resource "aws_lambda_function" "ml_inference" {
+  filename         = data.archive_file.lambda_ml.output_path
+  function_name    = "${var.app_name}-${var.environment}-ml-inference"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "index.handler"
+  runtime          = "python3.12"
+  source_code_hash = data.archive_file.lambda_ml.output_base64sha256
+  timeout          = 60
+  memory_size      = 512
+
+  environment {
+    variables = {
+      DEVICES_TABLE = aws_dynamodb_table.device_profiles.name
+      # SAGEMAKER_ENDPOINT = aws_sagemaker_endpoint.latency_predictor.name  # Phase 3以降
+    }
+  }
+
+  tags = {
+    Name = "${var.app_name}-${var.environment}-ml-inference"
+  }
+}
+```
+
+### 7.7 Flutter API クライアント
+
+```dart
+// lib/services/api_service.dart
+
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:amplify_flutter/amplify_flutter.dart';
+
+class ApiService {
+  static const String baseUrl = 'https://api.spatialsync.example.com';
+
+  static final ApiService _instance = ApiService._internal();
+  factory ApiService() => _instance;
+  ApiService._internal();
+
+  Future<String> _getAccessToken() async {
+    final session = await Amplify.Auth.fetchAuthSession()
+        as CognitoAuthSession;
+    return session.userPoolTokensResult.value.accessToken.toJson();
+  }
+
+  /// ユーザー設定を取得
+  Future<Map<String, dynamic>> getSettings() async {
+    final token = await _getAccessToken();
+    final response = await http.get(
+      Uri.parse('$baseUrl/settings'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return jsonDecode(response.body);
+  }
+
+  /// 設定を更新
+  Future<void> updateSettings(String type, Map<String, dynamic> data) async {
+    final token = await _getAccessToken();
+    await http.put(
+      Uri.parse('$baseUrl/settings/$type'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode(data),
+    );
+  }
+
+  /// デバイス遅延予測
+  Future<LatencyPrediction> predictLatency({
+    required String deviceModel,
+    required String osVersion,
+    String? bluetoothCodec,
+  }) async {
+    final token = await _getAccessToken();
+    final response = await http.post(
+      Uri.parse('$baseUrl/ml/predict-latency'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'deviceModel': deviceModel,
+        'osVersion': osVersion,
+        'bluetoothCodec': bluetoothCodec,
+      }),
+    );
+    return LatencyPrediction.fromJson(jsonDecode(response.body));
+  }
+
+  /// キャリブレーション結果を送信
+  Future<void> submitCalibration({
+    required String deviceModel,
+    required String osVersion,
+    required double measuredLatency,
+    String? bluetoothCodec,
+  }) async {
+    final token = await _getAccessToken();
+    await http.post(
+      Uri.parse('$baseUrl/devices/calibration'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'deviceModel': deviceModel,
+        'osVersion': osVersion,
+        'measuredLatency': measuredLatency,
+        'bluetoothCodec': bluetoothCodec,
+      }),
+    );
+  }
+}
+
+class LatencyPrediction {
+  final double predictedLatency;
+  final int recommendedBuffer;
+  final double confidence;
+
+  LatencyPrediction({
+    required this.predictedLatency,
+    required this.recommendedBuffer,
+    required this.confidence,
+  });
+
+  factory LatencyPrediction.fromJson(Map<String, dynamic> json) {
+    return LatencyPrediction(
+      predictedLatency: json['predictedLatency'].toDouble(),
+      recommendedBuffer: json['recommendedBuffer'],
+      confidence: json['confidence'].toDouble(),
+    );
+  }
+}
+```
+
+### 7.8 AWS サービス一覧
+
+| サービス | 用途 | フェーズ |
+|----------|------|----------|
+| **Cognito** | ユーザー認証 | 実装済み |
+| **API Gateway** | REST API | Phase 1 |
+| **Lambda** | ビジネスロジック | Phase 1 |
+| **DynamoDB** | ユーザー設定、デバイスプロファイル | Phase 1 |
+| **CloudWatch** | ログ、メトリクス | Phase 1 |
+| **S3** | オーディオファイル保存（オプション） | Phase 2 |
+| **SageMaker** | 本格MLモデル | Phase 3 |
+| **CloudFront** | CDN（オプション） | Phase 4 |
+
+---
+
+## 8. 開発フェーズ
 
 ### Phase 1: MVP（iOS限定、手動割り当て）
 
@@ -356,18 +789,22 @@ AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_EXCLUSIVE)
 ├─ iOS デバイス間での同期再生実証
 ├─ 手動 L/R チャンネル割り当て
 ├─ 100ms バッファで安定動作
-└─ 同期精度 ±5ms
+├─ 同期精度 ±5ms
+└─ AWSバックエンド基盤構築
 
 【技術】
 ├─ Flutter (iOS only)
 ├─ AVAudioEngine
 ├─ WebSocket + UDP
-└─ Opus コーデック
+├─ Opus コーデック
+└─ AWS (API Gateway + Lambda + DynamoDB)
 
 【成果物】
 ├─ ホストアプリ: ローカル音楽再生 + ストリーミング
 ├─ クライアントアプリ: 受信 + 同期再生
-└─ 手動チャンネル割り当てUI
+├─ 手動チャンネル割り当てUI
+├─ ユーザー設定保存/復元機能
+└─ デバイスプロファイル収集開始
 ```
 
 ### Phase 2: UWB位置検出
@@ -416,7 +853,7 @@ AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_EXCLUSIVE)
 
 ---
 
-## 8. プロジェクト構造
+## 9. プロジェクト構造
 
 ```
 lib/
@@ -440,7 +877,17 @@ lib/
 │       ├── uwb_manager.dart           # UWB位置検出 (Phase 2)
 │       └── channel_router.dart        # チャンネルルーティング
 │
+├── services/
+│   ├── auth_service.dart              # Cognito認証 (実装済み)
+│   ├── api_service.dart               # AWS API クライアント
+│   └── settings_service.dart          # ユーザー設定管理
+│
 ├── features/
+│   ├── auth/                          # 認証画面 (実装済み)
+│   │   ├── login_screen.dart
+│   │   ├── signup_screen.dart
+│   │   └── ...
+│   │
 │   ├── host/
 │   │   ├── host_screen.dart           # ホスト画面
 │   │   ├── source_selector.dart       # 音源選択
@@ -457,12 +904,13 @@ lib/
 └── models/
     ├── session.dart                   # セッションモデル
     ├── device_info.dart               # デバイス情報
-    └── channel_assignment.dart        # チャンネル割り当て
+    ├── channel_assignment.dart        # チャンネル割り当て
+    └── user_settings.dart             # ユーザー設定モデル
 ```
 
 ---
 
-## 9. 技術的リスクと対策
+## 10. 技術的リスクと対策
 
 | リスク | 影響度 | 対策 |
 |--------|--------|------|
@@ -474,13 +922,16 @@ lib/
 
 ---
 
-## 10. 評価指標
+## 11. 評価指標
 
 ### Phase 1 MVP
 - [ ] 3台のiOSデバイスで安定した同期再生
 - [ ] 手動L/R割り当てが正常動作
 - [ ] 同期精度 ±5ms以内
 - [ ] 1時間連続再生でドリフトなし
+- [ ] AWS API Gateway + Lambda + DynamoDB デプロイ完了
+- [ ] ユーザー設定の保存/復元が動作
+- [ ] デバイスプロファイル収集が動作
 
 ### Phase 2 UWB
 - [ ] UWBで位置検出・自動チャンネル割り当て動作
@@ -491,6 +942,8 @@ lib/
 - [ ] Android→iOS ストリーミング動作
 - [ ] YouTube音声キャプチャ・配信成功
 - [ ] Pixel デバイスで50ms以下遅延達成
+- [ ] SageMaker エンドポイントでML推論動作
+- [ ] 遅延予測精度 ±10ms以内
 
 ### Phase 4 最適化
 - [ ] 10台同時接続で安定動作
@@ -499,7 +952,7 @@ lib/
 
 ---
 
-## 11. 参考リソース
+## 12. 参考リソース
 
 | リソース | URL |
 |----------|-----|
@@ -510,6 +963,13 @@ lib/
 | Android AudioPlaybackCapture | https://developer.android.com/media/platform/av-capture |
 | iOS AVAudioEngine | https://developer.apple.com/documentation/avfaudio/avaudioengine |
 | Opus Codec | https://opus-codec.org/ |
+| AWS Cognito | https://docs.aws.amazon.com/cognito/ |
+| AWS API Gateway | https://docs.aws.amazon.com/apigateway/ |
+| AWS Lambda | https://docs.aws.amazon.com/lambda/ |
+| AWS DynamoDB | https://docs.aws.amazon.com/dynamodb/ |
+| AWS SageMaker | https://docs.aws.amazon.com/sagemaker/ |
+| Terraform AWS Provider | https://registry.terraform.io/providers/hashicorp/aws/ |
+| Amplify Flutter | https://docs.amplify.aws/flutter/ |
 
 ---
 
