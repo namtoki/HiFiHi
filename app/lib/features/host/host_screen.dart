@@ -186,26 +186,34 @@ class _HostScreenState extends State<HostScreen> {
 
     try {
       if (_isPlaying) {
+        debugPrint('[Host] Stopping playback...');
         await _audioEngine.stopPlayback();
+        debugPrint('[Host] stopPlayback done');
         await _audioEngine.stopCapture();
+        debugPrint('[Host] stopCapture done');
         _syncProtocol.pausePlayback();
         setState(() {
           _isPlaying = false;
         });
+        debugPrint('[Host] Playback stopped');
       } else {
         if (_selectedFilePath != null) {
+          debugPrint('[Host] Starting playback: $_selectedFilePath');
           await _audioEngine.startCapture(
             source: AudioSource.file(_selectedFilePath!),
           );
+          debugPrint('[Host] startCapture done');
           await _audioEngine.startPlayback();
+          debugPrint('[Host] startPlayback done');
           _syncProtocol.startPlayback();
           setState(() {
             _isPlaying = true;
           });
+          debugPrint('[Host] Playback started');
         }
       }
     } catch (e) {
-      debugPrint('Playback error: $e');
+      debugPrint('[Host] Playback error: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Playback error: $e')),
       );

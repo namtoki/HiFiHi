@@ -151,34 +151,56 @@ class AudioEnginePlugin: NSObject {
 
     private func startFileCapture(path: String, result: @escaping FlutterResult) {
         do {
+            NSLog("[AudioEngine] startFileCapture: %@", path)
+
+            guard let engine = audioEngine, let player = playerNode else {
+                result(FlutterError(code: "NOT_INIT", message: "Audio engine not initialized", details: nil))
+                return
+            }
+
+            // Stop and clean up any previous capture
+            player.stop()
+            player.removeTap(onBus: 0)
+
             let url = URL(fileURLWithPath: path)
             audioFile = try AVAudioFile(forReading: url)
 
-            guard let file = audioFile, let player = playerNode, let engine = audioEngine else {
+            guard let file = audioFile else {
                 result(FlutterError(code: "FILE_ERROR", message: "Failed to open file", details: nil))
                 return
             }
 
             // Use the file's processing format for connection
             let fileFormat = file.processingFormat
+            NSLog("[AudioEngine] File format: %@", fileFormat.description)
 
             // Reconnect player with file's format to avoid format mismatch
             engine.disconnectNodeOutput(player)
             engine.connect(player, to: engine.mainMixerNode, format: fileFormat)
 
-            // Install tap with nil format to use the node's current output format
-            let frameCapacity = AVAudioFrameCount(fileFormat.sampleRate * Double(bufferSizeMs) / 1000.0)
-
-            player.installTap(onBus: 0, bufferSize: frameCapacity, format: nil) { [weak self] buffer, time in
-                self?.handleCapturedAudio(buffer: buffer, time: time)
+            // Ensure engine is running
+            if !engine.isRunning {
+                NSLog("[AudioEngine] Engine not running, starting...")
+                try engine.start()
             }
 
+            // Schedule the file
             player.scheduleFile(file, at: nil) { [weak self] in
+                NSLog("[AudioEngine] Playback complete callback")
                 self?.sendEvent(type: "playbackComplete", data: nil)
             }
 
+            // Install tap (use the file's format)
+            let frameCapacity = AVAudioFrameCount(fileFormat.sampleRate * Double(bufferSizeMs) / 1000.0)
+
+            player.installTap(onBus: 0, bufferSize: frameCapacity, format: fileFormat) { [weak self] buffer, time in
+                self?.handleCapturedAudio(buffer: buffer, time: time)
+            }
+
+            NSLog("[AudioEngine] File scheduled, ready to play")
             result(nil)
         } catch {
+            NSLog("[AudioEngine] Error: %@", error.localizedDescription)
             result(FlutterError(code: "FILE_ERROR", message: error.localizedDescription, details: nil))
         }
     }
@@ -233,8 +255,12 @@ class AudioEnginePlugin: NSObject {
     }
 
     private func stopCapture(result: @escaping FlutterResult) {
+        NSLog("[AudioEngine] stopCapture called")
+        playerNode?.stop()
         playerNode?.removeTap(onBus: 0)
         audioEngine?.inputNode.removeTap(onBus: 0)
+        audioFile = nil
+        NSLog("[AudioEngine] stopCapture complete")
         result(nil)
     }
 
@@ -246,8 +272,10 @@ class AudioEnginePlugin: NSObject {
             return
         }
 
+        NSLog("[AudioEngine] startPlayback called")
         playerNode?.play()
         isPlaying = true
+        NSLog("[AudioEngine] Player is now playing: %d", playerNode?.isPlaying ?? false)
         result(nil)
     }
 
