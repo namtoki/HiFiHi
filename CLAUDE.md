@@ -17,28 +17,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Environment
 
-Uses Devbox for environment management:
+- **Flutter/iOS**: Use fvm directly (outside devbox shell) for Xcode compatibility
+- **Terraform/AWS**: Use devbox shell for JDK17, Terraform, AWS CLI
+
 ```bash
-devbox shell    # Enter dev environment (Flutter + JDK17)
+# Flutter/iOS development (do NOT use devbox shell)
+cd app
+fvm flutter run
+
+# Infrastructure work
+devbox shell    # Enter dev environment (JDK17 + Terraform + AWS CLI)
 ```
 
 ## Common Commands
 
 ```bash
-# Flutter commands (run from app/ directory)
+# Flutter commands (run from app/ directory, WITHOUT devbox shell)
 cd app
-flutter pub get           # Install dependencies
-flutter run               # Run on connected device/simulator
-flutter build ios         # Build for iOS
-flutter analyze           # Run static analysis
-flutter test              # Run tests
+fvm flutter pub get           # Install dependencies
+fvm flutter run               # Run on connected device/simulator
+fvm flutter build ios         # Build for iOS
+fvm flutter analyze           # Run static analysis
+fvm flutter test              # Run tests
 
-# Run on multiple simulators
+# Run on multiple devices (simulator + real device)
 xcrun simctl boot "iPhone 15"
-xcrun simctl boot "iPhone 15 Pro"
-flutter run -d all
+fvm flutter run -d <device_id_1> -d <device_id_2>
 
-# Terraform commands (run from infrastructure/terraform/)
+# Terraform commands (run from infrastructure/terraform/, WITH devbox shell)
+devbox shell
 cd infrastructure/terraform
 terraform init            # Initialize Terraform
 terraform plan            # Preview changes

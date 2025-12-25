@@ -37,7 +37,8 @@
 
 - **iOS 15+** (Phase 1)
 - macOS with Xcode 15+
-- [Devbox](https://www.jetify.com/devbox) - 開発環境管理
+- [fvm](https://fvm.app/) - Flutter バージョン管理
+- [Devbox](https://www.jetify.com/devbox) - インフラ作業用（JDK17, Terraform, AWS CLI）
 - Apple Developer Program（実機テスト用）
 
 ## Quick Start
@@ -45,23 +46,32 @@
 ### 1. 開発環境のセットアップ
 
 ```bash
-# Devboxがない場合はインストール
-curl -fsSL https://get.jetify.com/devbox | bash
+# fvmがない場合はインストール
+dart pub global activate fvm
 
-# 開発環境に入る
-devbox shell
+# Flutterバージョンをインストール
+cd app
+fvm install
+
+# Devboxがない場合はインストール（Terraform作業用）
+curl -fsSL https://get.jetify.com/devbox | bash
 ```
+
+> **Note**: Flutter/iOS 開発は devbox shell を使わずに直接 fvm を使用してください。
+> devbox shell は Nix の SDK が Xcode と競合するため、Terraform 作業時のみ使用します。
 
 ### 2. Flutter依存関係のインストール
 
 ```bash
 cd app
-flutter pub get
+fvm flutter pub get
 ```
 
 ### 3. AWSインフラのデプロイ
 
 ```bash
+# Terraform作業はdevbox shell内で実行
+devbox shell
 cd infrastructure/terraform
 terraform init
 terraform apply -var-file=environments/dev.tfvars
@@ -70,10 +80,8 @@ terraform apply -var-file=environments/dev.tfvars
 ### 4. アプリ設定の更新
 
 ```bash
-# API Gateway URLを取得
+# devbox shell内で実行
 terraform output api_gateway_url
-
-# Cognito設定を取得
 terraform output flutter_amplify_config
 ```
 
@@ -84,15 +92,18 @@ terraform output flutter_amplify_config
 ### 5. アプリの実行
 
 ```bash
+# devbox shellから抜ける（Flutter/iOSビルドはdevbox外で実行）
+exit
+
 cd app
 
 # iOSシミュレータで実行
-flutter run
+fvm flutter run
 
-# 複数のシミュレータで同時実行
+# 複数デバイスで同時実行（シミュレータ + 実機）
 xcrun simctl boot "iPhone 15"
-xcrun simctl boot "iPhone 15 Pro"
-flutter run -d all
+fvm flutter devices                    # デバイスID確認
+fvm flutter run -d <device_id_1> -d <device_id_2>
 ```
 
 ## Architecture
@@ -171,15 +182,16 @@ Magic(4B) | Version(1B) | SeqNum(4B) | PlayTime(8B) | ChMask(1B) | Len(2B) | Pay
 ## Commands
 
 ```bash
-# Flutter
+# Flutter (devbox shell外で実行)
 cd app
-flutter pub get           # 依存関係インストール
-flutter run               # 実行
-flutter build ios         # iOSビルド
-flutter analyze           # 静的解析
-flutter test              # テスト
+fvm flutter pub get           # 依存関係インストール
+fvm flutter run               # 実行
+fvm flutter build ios         # iOSビルド
+fvm flutter analyze           # 静的解析
+fvm flutter test              # テスト
 
-# Terraform
+# Terraform (devbox shell内で実行)
+devbox shell
 cd infrastructure/terraform
 terraform init            # 初期化
 terraform plan            # プレビュー
@@ -194,17 +206,24 @@ terraform destroy         # 削除
 
 1. Xcodeでチーム設定
 2. デバイスをMacに接続
-3. `flutter run` で直接インストール
+3. `fvm flutter run` で直接インストール
 
 ### TestFlight経由
 
-1. `flutter build ipa`
+1. `fvm flutter build ipa`
 2. App Store Connectにアップロード
 3. TestFlightで配布
 
 ## Troubleshooting
 
 ### Flutter環境の問題
+
+```bash
+fvm install
+fvm flutter doctor
+```
+
+### Devbox環境の問題
 
 ```bash
 devbox rm
@@ -216,9 +235,9 @@ devbox shell
 
 ```bash
 cd app
-flutter clean
-flutter pub get
-flutter run
+fvm flutter clean
+fvm flutter pub get
+fvm flutter run
 ```
 
 ### CocoaPodsの問題
