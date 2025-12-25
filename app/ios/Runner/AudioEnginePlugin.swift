@@ -258,8 +258,7 @@ class AudioEnginePlugin: NSObject {
         }
 
         guard let args = call.arguments as? [String: Any],
-              let data = args["data"] as? FlutterStandardTypedData,
-              let playTimeUs = args["playTimeUs"] as? Int64 else {
+              let data = args["data"] as? FlutterStandardTypedData else {
             result(FlutterError(code: "INVALID_ARGS", message: "Invalid arguments", details: nil))
             return
         }
@@ -270,20 +269,10 @@ class AudioEnginePlugin: NSObject {
             return
         }
 
-        // Calculate when to play
-        let currentTimeUs = getCurrentTimeUs()
-        let delayUs = playTimeUs - currentTimeUs
-
-        if delayUs > 0 {
-            // Schedule for future playback
-            let delayFrames = AVAudioFramePosition(Double(delayUs) / 1_000_000.0 * sampleRate)
-            let hostTime = mach_absolute_time() + UInt64(delayUs * 1000) // nanoseconds
-            let time = AVAudioTime(hostTime: hostTime, sampleTime: delayFrames, atRate: sampleRate)
-            player.scheduleBuffer(buffer, at: time, options: [], completionHandler: nil)
-        } else {
-            // Play immediately (we're behind)
-            player.scheduleBuffer(buffer, completionHandler: nil)
-        }
+        // Flutter's AudioBuffer already handles timing via getReadyPackets()
+        // Just queue the buffer for immediate sequential playback
+        // The AVAudioPlayerNode will play buffers in order as they're scheduled
+        player.scheduleBuffer(buffer, completionHandler: nil)
 
         result(nil)
     }

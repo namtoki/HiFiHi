@@ -13,6 +13,7 @@ class AudioBuffer {
   int _nextExpectedSeq = 0;
   int _lastPlayedTimeUs = 0;
   bool _isBuffering = true;
+  int _minBufferPackets = 5; // Minimum packets before starting playback
 
   /// Statistics
   int _packetsReceived = 0;
@@ -23,7 +24,11 @@ class AudioBuffer {
     this.targetBufferMs = 100,
     this.sampleRate = 48000,
     this.bytesPerSample = 2,
-  });
+  }) {
+    // Calculate minimum buffer packets based on target buffer time
+    // Assuming ~20ms worth of audio per packet
+    _minBufferPackets = (targetBufferMs / 20).clamp(3, 10).toInt();
+  }
 
   /// Whether the buffer is still filling up.
   bool get isBuffering => _isBuffering;
@@ -47,28 +52,31 @@ class AudioBuffer {
   void addPacket(AudioPacket packet) {
     _packetsReceived++;
 
-    // Drop old packets
-    if (packet.sequenceNumber < _nextExpectedSeq - 10) {
+    // Drop very old packets (more than 20 behind expected sequence)
+    if (_nextExpectedSeq > 0 && packet.sequenceNumber < _nextExpectedSeq - 20) {
       _packetsDropped++;
       return;
     }
 
-    // Check if packet is late (already past play time)
-    if (_lastPlayedTimeUs > 0 && packet.playTimeUs < _lastPlayedTimeUs) {
+    // Check if packet is very late (already past play time by more than 50ms)
+    // Be more lenient to avoid dropping too many packets
+    if (_lastPlayedTimeUs > 0 && packet.playTimeUs < _lastPlayedTimeUs - 50000) {
       _packetsLate++;
       return;
     }
 
     _packets[packet.sequenceNumber] = packet;
 
-    // Check if buffer is full enough
-    if (_isBuffering && fillLevel >= 0.8) {
+    // Check if buffer has enough packets to start playback
+    // Use packet count instead of fillLevel for more reliable buffering
+    if (_isBuffering && _packets.length >= _minBufferPackets) {
       _isBuffering = false;
     }
 
-    // Limit buffer size
-    while (_packets.length > 100) {
+    // Limit buffer size to prevent memory issues
+    while (_packets.length > 150) {
       _packets.remove(_packets.firstKey());
+      _packetsDropped++;
     }
   }
 
@@ -96,14 +104,19 @@ class AudioBuffer {
   }
 
   /// Get all packets ready to be played.
+  /// Returns packets in sequence order for smooth playback.
   List<AudioPacket> getReadyPackets(int currentTimeUs) {
     if (_isBuffering || _packets.isEmpty) return [];
 
     final result = <AudioPacket>[];
     final keysToRemove = <int>[];
 
+    // Get packets that are ready or slightly overdue
+    // Include packets up to 30ms ahead to ensure smooth continuous playback
+    final lookAheadUs = currentTimeUs + 30000;
+
     for (final entry in _packets.entries) {
-      if (entry.value.playTimeUs <= currentTimeUs) {
+      if (entry.value.playTimeUs <= lookAheadUs) {
         result.add(entry.value);
         keysToRemove.add(entry.key);
         _nextExpectedSeq = entry.key + 1;

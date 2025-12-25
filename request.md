@@ -973,5 +973,572 @@ lib/
 
 ---
 
-*Last Updated: 2024-12-24*
+## 13. 特許技術仕様（実装ガイドライン）
+
+本セクションは特許出願ドラフト（4_document.md）から抽出した詳細実装仕様である。
+
+### 13.1 オーディオパケット拡張仕様
+
+特許請求の範囲に対応した完全なパケットフォーマット:
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                    Extended Audio Packet Format                       │
+├──────────┬──────────┬────────────────────────────────────────────────┤
+│  Field   │  Size    │  Description                                   │
+├──────────┼──────────┼────────────────────────────────────────────────┤
+│ Magic    │  4B      │ "SSYN" (0x5353594E) - SpatialSync identifier   │
+│ Version  │  1B      │ Protocol version (0x01)                        │
+│ Flags    │  1B      │ bit0: compressed, bit1: FEC, bit2-7: reserved  │
+│ SeqNum   │  4B      │ Sequence number (big-endian)                   │
+│ PlayTime │  8B      │ Playback timestamp (μs, host clock base)       │
+│ ChMask   │  1B      │ Channel mask (see below)                       │
+│ SampleRate│ 3B      │ Sample rate in Hz (e.g., 48000)                │
+│ PayloadLen│ 2B      │ Payload length in bytes                        │
+│ Reserved │  1B      │ Reserved for future use                        │
+├──────────┴──────────┴────────────────────────────────────────────────┤
+│ Header Total: 25 bytes                                                │
+├──────────────────────────────────────────────────────────────────────┤
+│ Payload  │ Variable │ PCM/Opus audio data                            │
+└──────────────────────────────────────────────────────────────────────┘
+
+Channel Mask (ChMask) ビット定義:
+  bit0: Left Front (L)
+  bit1: Right Front (R)
+  bit2: Center (C)
+  bit3: LFE (Subwoofer)
+  bit4: Surround Left (SL)
+  bit5: Surround Right (SR)
+  bit6-7: Reserved
+
+例:
+  0x03 = Stereo (L+R)
+  0x07 = 3.0ch (L+R+C)
+  0x3F = 5.1ch (L+R+C+LFE+SL+SR)
+```
+
+### 13.2 時刻同期プロトコル詳細
+
+特許請求項2に対応した4タイムスタンプ方式の完全実装:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Time Sync Protocol Sequence                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  Client (Slave)                          Host (Master)                  │
+│       │                                        │                        │
+│       │                                        │                        │
+│  T1 ──┼────── SYNC_REQUEST ──────────────────►│                        │
+│       │      { slave_id, T1 }                  │                        │
+│       │                                        │── T2 (受信時刻)        │
+│       │                                        │                        │
+│       │                                        │── T3 (送信時刻)        │
+│       │◄────── SYNC_RESPONSE ─────────────────┼                        │
+│  T4 ──│      { slave_id, T1, T2, T3 }         │                        │
+│       │                                        │                        │
+│  [計算]                                        │                        │
+│  RTT = (T4 - T1) - (T3 - T2)                  │                        │
+│  Offset = ((T2 - T1) + (T3 - T4)) / 2         │                        │
+│                                                │                        │
+│  [補正]                                        │                        │
+│  SyncedTime = LocalTime + Offset              │                        │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+SYNC_REQUEST パケット構造 (16 bytes):
+┌────────────┬──────────────┬────────────────────┐
+│ Magic (4B) │ Type (1B)    │ SlaveID (3B)       │
+│ "SYNC"     │ 0x01=REQ     │                    │
+├────────────┴──────────────┴────────────────────┤
+│ T1 (8B) - Client送信時刻 (μs)                  │
+└────────────────────────────────────────────────┘
+
+SYNC_RESPONSE パケット構造 (32 bytes):
+┌────────────┬──────────────┬────────────────────┐
+│ Magic (4B) │ Type (1B)    │ SlaveID (3B)       │
+│ "SYNC"     │ 0x02=RES     │                    │
+├────────────┴──────────────┴────────────────────┤
+│ T1 (8B) - Client送信時刻 (エコーバック)        │
+├────────────────────────────────────────────────┤
+│ T2 (8B) - Host受信時刻 (μs)                    │
+├────────────────────────────────────────────────┤
+│ T3 (8B) - Host送信時刻 (μs)                    │
+└────────────────────────────────────────────────┘
+
+同期パラメータ:
+  - 同期間隔: 1秒 (安定時は5秒に延長)
+  - 精度目標: ±5ms (99%tile)
+  - 中央値フィルタ: 直近5回の測定から中央値を採用
+  - 異常値除去: RTT > 100ms の測定は破棄
+```
+
+### 13.3 チャンネルマルチキャスト割り当て
+
+特許請求項3,6に対応したマルチキャストグループ設計:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│              Channel-based Multicast Architecture                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  【ユニキャスト方式（Phase 1 現在の実装）】                              │
+│                                                                         │
+│    Host ──► Client A (L)     Port 5355                                 │
+│         └─► Client B (R)     Port 5355                                 │
+│         └─► Client C (C)     Port 5355                                 │
+│                                                                         │
+│    ※ 各クライアントに個別送信（帯域効率△）                             │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  【マルチキャスト方式（Phase 4 最適化）】                                │
+│                                                                         │
+│  Channel │ Multicast Address │ Port  │ Description                     │
+│  ────────┼───────────────────┼───────┼─────────────────────────────    │
+│  Stereo  │ 239.255.0.1       │ 5361  │ L+R combined (default)          │
+│  L       │ 239.255.0.2       │ 5362  │ Left Front only                 │
+│  R       │ 239.255.0.3       │ 5363  │ Right Front only                │
+│  C       │ 239.255.0.4       │ 5364  │ Center only                     │
+│  LFE     │ 239.255.0.5       │ 5365  │ Subwoofer only                  │
+│  SL      │ 239.255.0.6       │ 5366  │ Surround Left only              │
+│  SR      │ 239.255.0.7       │ 5367  │ Surround Right only             │
+│                                                                         │
+│    Client A ──join──► 239.255.0.2 (L channel)                          │
+│    Client B ──join──► 239.255.0.3 (R channel)                          │
+│                                                                         │
+│    ※ Hostは各チャンネルを1回だけ送信（帯域効率◎）                       │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 13.4 ジッター吸収バッファ制御
+
+特許請求項4に対応した適応的バッファ管理:
+
+```dart
+/// 適応的ジッターバッファ実装ガイドライン
+///
+/// 特許請求項4: バッファ残量監視による補間/破棄制御
+
+class AdaptiveJitterBuffer {
+  // バッファパラメータ
+  static const int targetBufferMs = 100;      // 目標バッファ量
+  static const int minBufferMs = 40;          // 下限閾値
+  static const int maxBufferMs = 200;         // 上限閾値
+
+  // バッファ状態
+  int currentBufferMs = 0;
+
+  void processPacket(AudioPacket packet, int currentTimeUs) {
+    final playTimeUs = packet.playTimeUs;
+    final delayUs = playTimeUs - currentTimeUs;
+
+    // バッファ量を計算
+    currentBufferMs = delayUs ~/ 1000;
+
+    if (currentBufferMs < minBufferMs) {
+      // バッファアンダーラン防止: 無音補間
+      _insertSilence(targetBufferMs - currentBufferMs);
+    } else if (currentBufferMs > maxBufferMs) {
+      // バッファオーバーフロー防止: 古いパケット破棄
+      _discardOldPackets(currentBufferMs - targetBufferMs);
+    }
+  }
+
+  void _insertSilence(int durationMs) {
+    // 無音データを生成してバッファに挿入
+    // または前のサンプルをフェードアウトして繰り返し
+  }
+
+  void _discardOldPackets(int excessMs) {
+    // 最も古いパケットから順に破棄
+    // シーケンス番号の連続性を維持
+  }
+}
+```
+
+### 13.5 パケットロス検出と補間
+
+特許請求項5に対応したパケットロス対策:
+
+```dart
+/// パケットロス検出・補間実装ガイドライン
+
+class PacketLossHandler {
+  int _expectedSeqNum = 0;
+  final List<AudioPacket> _recentPackets = [];
+
+  void handlePacket(AudioPacket packet) {
+    final receivedSeq = packet.sequenceNumber;
+
+    if (receivedSeq != _expectedSeqNum) {
+      // パケットロス検出
+      final lostCount = receivedSeq - _expectedSeqNum;
+
+      if (lostCount > 0 && lostCount < 10) {
+        // 軽度のロス: 補間処理
+        for (int i = 0; i < lostCount; i++) {
+          final interpolated = _interpolatePacket(
+            _recentPackets.last,
+            packet,
+            i + 1,
+            lostCount + 1,
+          );
+          _outputPacket(interpolated);
+        }
+      } else if (lostCount >= 10) {
+        // 重度のロス: リセット
+        _resetBuffer();
+      }
+    }
+
+    _expectedSeqNum = receivedSeq + 1;
+    _recentPackets.add(packet);
+    if (_recentPackets.length > 5) {
+      _recentPackets.removeAt(0);
+    }
+
+    _outputPacket(packet);
+  }
+
+  AudioPacket _interpolatePacket(
+    AudioPacket prev,
+    AudioPacket next,
+    int position,
+    int total,
+  ) {
+    // 線形補間による中間パケット生成
+    final ratio = position / total;
+    final interpolatedPayload = Uint8List(prev.payload.length);
+
+    for (int i = 0; i < prev.payload.length; i += 2) {
+      // 16-bit PCMサンプルの線形補間
+      final prevSample = _bytesToInt16(prev.payload, i);
+      final nextSample = _bytesToInt16(next.payload, i);
+      final interpolated = (prevSample * (1 - ratio) + nextSample * ratio).round();
+      _int16ToBytes(interpolated, interpolatedPayload, i);
+    }
+
+    return AudioPacket(
+      sequenceNumber: prev.sequenceNumber + position,
+      playTimeUs: prev.playTimeUs +
+        ((next.playTimeUs - prev.playTimeUs) * ratio).round(),
+      channelMask: prev.channelMask,
+      payload: interpolatedPayload,
+    );
+  }
+}
+```
+
+### 13.6 UWB位置ベース自動チャンネル割り当て（Phase 2）
+
+特許請求項6,7,8に対応した位置検出とチャンネル割り当てアルゴリズム:
+
+```dart
+/// UWB位置ベースチャンネル自動割り当て実装ガイドライン
+///
+/// 特許請求項6: UWB三辺測量による位置算出
+/// 特許請求項7: 方位角に基づくチャンネル割り当てロジック
+/// 特許請求項8: 複数候補時の最適化選択
+
+class UwbChannelRouter {
+  // リスニングポジション（基準点）
+  late Position3D listeningPosition;
+
+  // UWBアンカー位置（既知）
+  final List<Position3D> anchors = [];
+
+  /// デバイス位置から最適チャンネルを決定
+  AudioChannel assignChannel(DevicePosition device) {
+    // 1. リスニングポジションからの相対位置を計算
+    final relative = device.position - listeningPosition;
+
+    // 2. 方位角を計算 (水平面での角度、正面=0°)
+    final azimuth = atan2(relative.y, relative.x) * 180 / pi;
+
+    // 3. 方位角に基づくチャンネル判定 (特許請求項7)
+    return _azimuthToChannel(azimuth);
+  }
+
+  AudioChannel _azimuthToChannel(double azimuth) {
+    // 5.1chサラウンド配置に基づく角度範囲
+    //
+    //           C (0°)
+    //    L(-30°)  |  R(+30°)
+    //       \     |     /
+    //        \    |    /
+    //         \   |   /
+    //          Listener
+    //         /   |   \
+    //        /    |    \
+    //       /     |     \
+    //   SL(-110°) | SR(+110°)
+    //
+
+    if (azimuth >= -15 && azimuth < 15) {
+      return AudioChannel.center;
+    } else if (azimuth >= -30 && azimuth < -15) {
+      return AudioChannel.left;
+    } else if (azimuth >= 15 && azimuth < 30) {
+      return AudioChannel.right;
+    } else if (azimuth >= 100 && azimuth < 135) {
+      return AudioChannel.surroundLeft;
+    } else if (azimuth >= -135 && azimuth < -100) {
+      return AudioChannel.surroundRight;
+    } else {
+      // 範囲外: 最も近いチャンネルを割り当て
+      return _findNearestChannel(azimuth);
+    }
+  }
+
+  /// 複数デバイスが同一チャンネル候補の場合の最適化選択 (特許請求項8)
+  void optimizeAssignments(List<DevicePosition> devices) {
+    // 各チャンネルの理想方位角
+    const idealAngles = {
+      AudioChannel.left: -26.0,      // FL: -22.5° ~ -30°の中央
+      AudioChannel.right: 26.0,       // FR: +22.5° ~ +30°の中央
+      AudioChannel.center: 0.0,       // C: 0°
+      AudioChannel.surroundLeft: 110.0,  // SL: +100° ~ +120°の中央
+      AudioChannel.surroundRight: -110.0, // SR: -100° ~ -120°の中央
+    };
+
+    // 各チャンネルに対して最も理想角度に近いデバイスを選択
+    final assignments = <AudioChannel, DevicePosition>{};
+    final unassigned = List<DevicePosition>.from(devices);
+
+    for (final channel in idealAngles.keys) {
+      if (unassigned.isEmpty) break;
+
+      final ideal = idealAngles[channel]!;
+      unassigned.sort((a, b) {
+        final aDiff = (a.azimuth - ideal).abs();
+        final bDiff = (b.azimuth - ideal).abs();
+        return aDiff.compareTo(bDiff);
+      });
+
+      assignments[channel] = unassigned.removeAt(0);
+    }
+
+    // 結果を通知
+    for (final entry in assignments.entries) {
+      _notifyAssignment(entry.value.deviceId, entry.key);
+    }
+  }
+
+  /// UWB三辺測量による位置計算
+  Position3D calculatePosition(Map<int, double> anchorDistances) {
+    // 最低3つのアンカーからの距離が必要
+    if (anchorDistances.length < 3) {
+      throw Exception('At least 3 anchor distances required');
+    }
+
+    // 連立方程式を解いて位置を算出
+    // (x - x1)² + (y - y1)² + (z - z1)² = d1²
+    // (x - x2)² + (y - y2)² + (z - z2)² = d2²
+    // (x - x3)² + (y - y3)² + (z - z3)² = d3²
+
+    // 最小二乗法で解を求める（実装略）
+    return _solveTrilateration(anchorDistances);
+  }
+}
+
+class Position3D {
+  final double x, y, z;
+  Position3D(this.x, this.y, this.z);
+
+  Position3D operator -(Position3D other) {
+    return Position3D(x - other.x, y - other.y, z - other.z);
+  }
+}
+```
+
+### 13.7 システム初期化シーケンス
+
+特許実施形態7に対応したシステム起動フロー:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    System Initialization Sequence                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Phase 1: Network Configuration                                   │  │
+│  ├──────────────────────────────────────────────────────────────────┤  │
+│  │ 1. Host starts Wi-Fi AP or joins existing network               │  │
+│  │ 2. Host starts mDNS/Bonjour service advertisement               │  │
+│  │    Service: "_spatialsync._udp.local"                           │  │
+│  │    TXT Records: sessionId, sessionName, hostName                │  │
+│  │ 3. Clients discover Host via mDNS                               │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              ↓                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Phase 2: Device Registration                                    │  │
+│  ├──────────────────────────────────────────────────────────────────┤  │
+│  │ 1. Client sends REGISTER message to Host                        │  │
+│  │    { deviceId, deviceName, deviceModel, platform, osVersion }   │  │
+│  │ 2. Host assigns unique slaveId and adds to device list          │  │
+│  │ 3. Host responds with REGISTER_ACK                              │  │
+│  │    { slaveId, sessionConfig }                                   │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              ↓                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Phase 3: Time Synchronization                                   │  │
+│  ├──────────────────────────────────────────────────────────────────┤  │
+│  │ 1. Initial sync: 5 rapid exchanges (100ms interval)             │  │
+│  │ 2. Apply median filter to remove outliers                       │  │
+│  │ 3. Calculate final offset                                       │  │
+│  │ 4. Start periodic sync timer (1-5 second interval)              │  │
+│  │ 5. Mark device as "synced" when offset < 5ms                    │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              ↓                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Phase 4: Position Detection & Channel Assignment (UWB devices)  │  │
+│  ├──────────────────────────────────────────────────────────────────┤  │
+│  │ 1. UWB anchor calibration (if not already done)                 │  │
+│  │ 2. Each client measures distance to anchors                     │  │
+│  │ 3. Host calculates 3D positions via trilateration               │  │
+│  │ 4. Host applies channel assignment algorithm                    │  │
+│  │ 5. Host sends CHANNEL_ASSIGNMENT to each client                 │  │
+│  │    { slaveId, channel, multicastGroup }                         │  │
+│  │                                                                  │  │
+│  │ [Non-UWB fallback: Manual assignment via UI]                    │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                              ↓                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Phase 5: Audio Streaming Start                                  │  │
+│  ├──────────────────────────────────────────────────────────────────┤  │
+│  │ 1. Clients join assigned multicast group (or await unicast)     │  │
+│  │ 2. Host starts audio capture from source                        │  │
+│  │ 3. Host begins channel separation (if applicable)               │  │
+│  │ 4. Host starts sending audio packets with playback timestamps   │  │
+│  │ 5. Clients buffer packets and play at designated time           │  │
+│  │ 6. Host sends SESSION_STATE(playing) to all clients             │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 13.8 エラー処理とフォールバック
+
+特許実施形態9に対応した堅牢性設計:
+
+```dart
+/// エラー処理実装ガイドライン
+
+class ErrorHandler {
+  // ネットワーク切断検出
+  static const heartbeatIntervalMs = 1000;
+  static const heartbeatTimeoutMs = 5000;
+
+  // 時刻同期エラー閾値
+  static const syncErrorThresholdMs = 10;
+  static const maxSyncRetries = 5;
+
+  // パケットロス閾値
+  static const packetLossWarningPercent = 5;
+  static const packetLossCriticalPercent = 15;
+
+  /// ネットワーク切断時の処理
+  void handleDisconnect(String deviceId) {
+    // 1. デバイスリストから除外
+    // 2. チャンネル再割り当て実行（必要に応じて）
+    // 3. 他のクライアントに通知
+    // 4. 再接続監視開始
+  }
+
+  /// 時刻同期失敗時の処理
+  void handleSyncFailure(String deviceId, int consecutiveFailures) {
+    if (consecutiveFailures >= maxSyncRetries) {
+      // デバイスを一時的に無効化
+      _disableDevice(deviceId, 'Sync failure');
+    } else {
+      // 再同期を試行
+      _forceSyncRetry(deviceId);
+    }
+  }
+
+  /// パケットロス増加時の処理
+  void handlePacketLoss(double lossPercent) {
+    if (lossPercent >= packetLossCriticalPercent) {
+      // バッファサイズ増加 + ビットレート低減
+      _increaseBuffer(50);
+      _reduceBitrate();
+    } else if (lossPercent >= packetLossWarningPercent) {
+      // 警告表示のみ
+      _showNetworkWarning();
+    }
+  }
+
+  /// UWB測距失敗時のフォールバック
+  void handleUwbFailure(String deviceId) {
+    // 手動チャンネル割り当てモードに切り替え
+    _switchToManualMode(deviceId);
+    _promptUserForChannelSelection(deviceId);
+  }
+}
+```
+
+### 13.9 性能最適化パラメータ
+
+特許実施形態10に対応した最適化設定:
+
+```yaml
+# 性能最適化パラメータ設定
+
+latency_modes:
+  low_latency:
+    description: "Low latency mode (jitter sensitive)"
+    buffer_ms: 50
+    sync_interval_ms: 500
+    packet_size_samples: 480      # 10ms @ 48kHz
+    use_fec: false
+
+  standard:
+    description: "Balanced mode (default)"
+    buffer_ms: 100
+    sync_interval_ms: 1000
+    packet_size_samples: 960      # 20ms @ 48kHz
+    use_fec: false
+
+  high_stability:
+    description: "High stability mode (jitter resistant)"
+    buffer_ms: 200
+    sync_interval_ms: 2000
+    packet_size_samples: 1920     # 40ms @ 48kHz
+    use_fec: true
+
+power_saving:
+  uwb_measurement_interval_playing_ms: 60000    # 再生中は1分に1回
+  uwb_measurement_interval_idle_ms: 5000        # アイドル時は5秒に1回
+  reduce_uwb_on_stable_position: true           # 位置安定時はUWB頻度低減
+  sleep_detection_timeout_ms: 30000             # 30秒無反応でスリープ判定
+
+network_optimization:
+  max_udp_payload_bytes: 1400                   # MTU safe
+  multicast_ttl: 1                              # Same subnet only
+  socket_send_buffer_bytes: 65536
+  socket_recv_buffer_bytes: 131072
+```
+
+---
+
+## 14. 特許との対応表
+
+| 特許請求項 | 対応セクション | 実装状態 |
+|-----------|---------------|---------|
+| 請求項1 (システム全体) | 13.1-13.8 | Phase 1 部分実装 |
+| 請求項2 (時刻同期精度) | 13.2 | 実装済み (time_sync.dart) |
+| 請求項3 (パケット構造) | 13.1 | 実装済み (audio_packet.dart) |
+| 請求項4 (ジッタ吸収) | 13.4 | 実装済み (audio_buffer.dart) |
+| 請求項5 (パケットロス対応) | 13.5 | 未実装 |
+| 請求項6 (UWB位置検出) | 13.6 | Phase 2 予定 |
+| 請求項7 (チャンネル割り当てロジック) | 13.6 | Phase 2 予定 |
+| 請求項8 (割り当て最適化) | 13.6 | Phase 2 予定 |
+| 請求項9 (方法クレーム) | 13.7 | Phase 1 部分実装 |
+| 請求項10 (UWB自動割り当て方法) | 13.6, 13.7 | Phase 2 予定 |
+
+---
+
+*Last Updated: 2025-12-25*
 *Project: SpatialSync - Position-based Channel Separation Audio System*

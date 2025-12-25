@@ -39,7 +39,8 @@ class _ClientScreenState extends State<ClientScreen> {
     super.initState();
     _syncProtocol = SyncProtocol();
     _audioEngine = AudioEngine();
-    _audioBuffer = AudioBuffer(targetBufferMs: 100);
+    // Increase buffer to 150ms for more stable playback over WiFi
+    _audioBuffer = AudioBuffer(targetBufferMs: 150);
     _initializeClient();
   }
 
@@ -50,7 +51,7 @@ class _ClientScreenState extends State<ClientScreen> {
     await _audioEngine.initialize(
       sampleRate: 48000,
       channelCount: 2,
-      bufferSizeMs: 100,
+      bufferSizeMs: 10,
     );
 
     // Join session
@@ -97,11 +98,23 @@ class _ClientScreenState extends State<ClientScreen> {
   }
 
   void _startPlaybackLoop() {
-    _playbackTimer = Timer.periodic(const Duration(milliseconds: 10), (_) {
+    int loopCount = 0;
+    int totalPacketsPlayed = 0;
+
+    // Run playback loop every 5ms for smoother audio
+    _playbackTimer = Timer.periodic(const Duration(milliseconds: 5), (_) {
       if (!_isSynced) return;
 
       final currentTimeUs = _syncProtocol.timeSync.currentTimeSyncedUs;
       final packets = _audioBuffer.getReadyPackets(currentTimeUs);
+
+      loopCount++;
+      if (packets.isNotEmpty) {
+        totalPacketsPlayed += packets.length;
+        if (totalPacketsPlayed <= 10 || loopCount % 200 == 0) {
+          print('[ClientScreen] Playing ${packets.length} packets, total: $totalPacketsPlayed, buffer: ${_audioBuffer.bufferedPackets}');
+        }
+      }
 
       for (final packet in packets) {
         // Queue audio for playback

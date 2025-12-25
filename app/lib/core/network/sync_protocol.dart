@@ -10,7 +10,7 @@ import 'time_sync.dart';
 /// Main protocol coordinator for synchronized audio playback.
 class SyncProtocol {
   final TimeSync _timeSync;
-  final AudioStreamer _audioStreamer;
+  late final AudioStreamer _audioStreamer;
   final DiscoveryService _discoveryService;
 
   Session? _currentSession;
@@ -22,8 +22,42 @@ class SyncProtocol {
 
   SyncProtocol()
       : _timeSync = TimeSync(),
-        _audioStreamer = AudioStreamer(timeSync: TimeSync()),
-        _discoveryService = DiscoveryService();
+        _discoveryService = DiscoveryService() {
+    _audioStreamer = AudioStreamer(
+      timeSync: _timeSync,
+      onClientRegistered: _onClientRegistered,
+    );
+  }
+
+  void _onClientRegistered(String clientAddress) {
+    if (_currentSession == null || !_isHost) return;
+
+    print('[SyncProtocol] Client registered: $clientAddress');
+
+    // Create a DeviceInfo for the new client
+    final clientDevice = DeviceInfo(
+      id: 'client_$clientAddress',
+      name: 'Client ($clientAddress)',
+      model: 'Unknown',
+      platform: 'unknown',
+      connectionState: DeviceConnectionState.connected,
+      ipAddress: clientAddress,
+    );
+
+    // Add to session devices if not already present
+    final existingIndex = _currentSession!.devices.indexWhere(
+      (d) => d.ipAddress == clientAddress,
+    );
+
+    if (existingIndex < 0) {
+      final updatedDevices = List<DeviceInfo>.from(_currentSession!.devices)
+        ..add(clientDevice);
+
+      _currentSession = _currentSession!.copyWith(devices: updatedDevices);
+      _sessionController.add(_currentSession);
+      print('[SyncProtocol] Session now has ${_currentSession!.devices.length} devices');
+    }
+  }
 
   /// Stream of session updates.
   Stream<Session?> get sessionStream => _sessionController.stream;

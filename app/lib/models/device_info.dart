@@ -12,18 +12,20 @@ class DeviceInfo {
   final AudioChannel? assignedChannel;
   final int? estimatedLatencyMs;
   final DeviceConnectionState connectionState;
+  final String? ipAddress;
 
   const DeviceInfo({
     required this.id,
     required this.name,
     required this.model,
     required this.platform,
-    required this.osVersion,
+    this.osVersion = '',
     this.isHost = false,
     this.joinedAt,
     this.assignedChannel,
     this.estimatedLatencyMs,
     this.connectionState = DeviceConnectionState.disconnected,
+    this.ipAddress,
   });
 
   DeviceInfo copyWith({
@@ -37,6 +39,7 @@ class DeviceInfo {
     AudioChannel? assignedChannel,
     int? estimatedLatencyMs,
     DeviceConnectionState? connectionState,
+    String? ipAddress,
   }) {
     return DeviceInfo(
       id: id ?? this.id,
@@ -49,6 +52,7 @@ class DeviceInfo {
       assignedChannel: assignedChannel ?? this.assignedChannel,
       estimatedLatencyMs: estimatedLatencyMs ?? this.estimatedLatencyMs,
       connectionState: connectionState ?? this.connectionState,
+      ipAddress: ipAddress ?? this.ipAddress,
     );
   }
 
@@ -64,6 +68,7 @@ class DeviceInfo {
       'assignedChannel': assignedChannel?.code,
       'estimatedLatencyMs': estimatedLatencyMs,
       'connectionState': connectionState.name,
+      'ipAddress': ipAddress,
     };
   }
 
@@ -73,7 +78,7 @@ class DeviceInfo {
       name: json['name'] as String,
       model: json['model'] as String,
       platform: json['platform'] as String,
-      osVersion: json['osVersion'] as String,
+      osVersion: json['osVersion'] as String? ?? '',
       isHost: json['isHost'] as bool? ?? false,
       joinedAt: json['joinedAt'] != null
           ? DateTime.parse(json['joinedAt'] as String)
@@ -86,6 +91,7 @@ class DeviceInfo {
         (e) => e.name == json['connectionState'],
         orElse: () => DeviceConnectionState.disconnected,
       ),
+      ipAddress: json['ipAddress'] as String?,
     );
   }
 

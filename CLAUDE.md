@@ -120,7 +120,7 @@ Magic(4B) | Version(1B) | SeqNum(4B) | PlayTime(8B) | ChMask(1B) | Len(2B) | Pay
 - Median filtering for outlier removal
 
 ### Network Ports
-- Time Sync: UDP 5353
+- Time Sync: UDP 5350 (避けるべき: 5353はmDNSが使用)
 - Discovery: UDP 5354 (Multicast 239.255.255.250)
 - Audio Stream: UDP 5355
 

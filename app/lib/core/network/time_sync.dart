@@ -5,7 +5,7 @@ import 'dart:typed_data';
 /// NTP-style time synchronization between host and clients.
 /// Achieves sub-millisecond sync accuracy using round-trip time measurement.
 class TimeSync {
-  static const int _syncPort = 5353;
+  static const int _syncPort = 5350; // Avoid 5353 (mDNS)
   static const int _syncIntervalMs = 1000;
   static const int _maxSamples = 10;
 

@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../core/audio/audio.dart';
 import '../../core/network/network.dart';
@@ -24,6 +28,9 @@ class _HostScreenState extends State<HostScreen> {
   late AudioEngine _audioEngine;
   Session? _session;
   bool _isPlaying = false;
+  bool _isInitialized = false;
+  bool _isPickingFile = false;
+  String? _initError;
   String? _selectedFilePath;
   String? _selectedFileName;
 
@@ -36,96 +43,167 @@ class _HostScreenState extends State<HostScreen> {
   }
 
   Future<void> _initializeHost() async {
-    _syncProtocol.initialize(widget.localDevice);
+    try {
+      _syncProtocol.initialize(widget.localDevice);
 
-    // Create session
-    final session = await _syncProtocol.createSession();
-    setState(() {
-      _session = session;
-    });
-
-    // Initialize audio engine
-    await _audioEngine.initialize(
-      sampleRate: 48000,
-      channelCount: 2,
-      bufferSizeMs: 100,
-    );
-
-    // Listen for session updates
-    _syncProtocol.sessionStream.listen((session) {
+      // Create session
+      final session = await _syncProtocol.createSession();
       if (mounted) {
         setState(() {
           _session = session;
         });
       }
-    });
 
-    // Listen for audio frames and stream to clients
-    _audioEngine.audioFrameStream.listen((frame) {
-      _syncProtocol.sendAudio(
-        audioData: frame.data.toList(),
-        channelMask: 0x03, // Stereo
+      // Initialize audio engine
+      // Use smaller buffer for UDP transmission (10ms ~= 1920 bytes)
+      await _audioEngine.initialize(
+        sampleRate: 48000,
+        channelCount: 2,
+        bufferSizeMs: 10,
       );
-    });
+
+      // Listen for session updates
+      _syncProtocol.sessionStream.listen((session) {
+        if (mounted) {
+          setState(() {
+            _session = session;
+          });
+        }
+      });
+
+      // Listen for audio frames and stream to clients
+      int frameCount = 0;
+      _audioEngine.audioFrameStream.listen((frame) {
+        frameCount++;
+        if (frameCount % 50 == 0) {
+          debugPrint('[Host] Audio frame $frameCount, size: ${frame.data.length}');
+        }
+        _syncProtocol.sendAudio(
+          audioData: frame.data.toList(),
+          channelMask: 0x03, // Stereo
+        );
+      });
+
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _initError = e.toString();
+        });
+      }
+      debugPrint('Host initialization error: $e');
+    }
   }
 
   Future<void> _selectAudioFile() async {
-    // In a real app, use file_picker package
-    // For now, show a placeholder dialog
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Select Audio File'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.music_note),
-              title: const Text('Sample Track 1'),
-              onTap: () => Navigator.pop(context, '/sample/track1.m4a'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.music_note),
-              title: const Text('Sample Track 2'),
-              onTap: () => Navigator.pop(context, '/sample/track2.m4a'),
+    if (_isPickingFile) return;
+
+    setState(() {
+      _isPickingFile = true;
+    });
+
+    try {
+      // Show dialog to select bundled test files
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Select Audio'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.music_note),
+                title: const Text('Test Tone (440Hz)'),
+                subtitle: const Text('10 seconds sine wave'),
+                onTap: () => Navigator.pop(context, 'test_tone.m4a'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
+      );
 
-    if (result != null) {
-      setState(() {
-        _selectedFilePath = result;
-        _selectedFileName = result.split('/').last;
-      });
+      if (result != null) {
+        // Copy asset to temp directory
+        final tempPath = await _copyAssetToTemp(result);
+        if (tempPath != null) {
+          setState(() {
+            _selectedFilePath = tempPath;
+            _selectedFileName = result;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load audio: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPickingFile = false;
+        });
+      }
+    }
+  }
+
+  Future<String?> _copyAssetToTemp(String assetName) async {
+    try {
+      final byteData = await rootBundle.load('assets/audio/$assetName');
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File('${tempDir.path}/$assetName');
+      await tempFile.writeAsBytes(byteData.buffer.asUint8List());
+      return tempFile.path;
+    } catch (e) {
+      debugPrint('Error copying asset: $e');
+      return null;
     }
   }
 
   Future<void> _togglePlayback() async {
-    if (_isPlaying) {
-      await _audioEngine.stopPlayback();
-      await _audioEngine.stopCapture();
-      _syncProtocol.pausePlayback();
-    } else {
-      if (_selectedFilePath != null) {
-        await _audioEngine.startCapture(
-          source: AudioSource.file(_selectedFilePath!),
-        );
-        await _audioEngine.startPlayback();
-        _syncProtocol.startPlayback();
-      }
+    if (!_isInitialized) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Audio engine not ready: ${_initError ?? "initializing..."}')),
+      );
+      return;
     }
 
-    setState(() {
-      _isPlaying = !_isPlaying;
-    });
+    try {
+      if (_isPlaying) {
+        await _audioEngine.stopPlayback();
+        await _audioEngine.stopCapture();
+        _syncProtocol.pausePlayback();
+        setState(() {
+          _isPlaying = false;
+        });
+      } else {
+        if (_selectedFilePath != null) {
+          await _audioEngine.startCapture(
+            source: AudioSource.file(_selectedFilePath!),
+          );
+          await _audioEngine.startPlayback();
+          _syncProtocol.startPlayback();
+          setState(() {
+            _isPlaying = true;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Playback error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Playback error: $e')),
+      );
+    }
   }
 
   void _openChannelAssignment() {
@@ -187,6 +265,30 @@ class _HostScreenState extends State<HostScreen> {
                   Text(
                     'IP Address: $localIp',
                     style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  Row(
+                    children: [
+                      Icon(
+                        _isInitialized ? Icons.check_circle : Icons.pending,
+                        size: 16,
+                        color: _initError != null
+                            ? Colors.red
+                            : (_isInitialized ? Colors.green : Colors.orange),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          _initError != null
+                              ? 'Error: $_initError'
+                              : (_isInitialized ? 'Audio Ready' : 'Initializing...'),
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: _initError != null ? Colors.red : null,
+                              ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 8),
                   Row(

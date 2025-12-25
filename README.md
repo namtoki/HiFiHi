@@ -175,7 +175,7 @@ Magic(4B) | Version(1B) | SeqNum(4B) | PlayTime(8B) | ChMask(1B) | Len(2B) | Pay
 
 | Port | Protocol | 用途 |
 |------|----------|------|
-| 5353 | UDP | 時刻同期 |
+| 5350 | UDP | 時刻同期 |
 | 5354 | UDP Multicast | ホスト発見 |
 | 5355 | UDP | オーディオストリーム |
 
