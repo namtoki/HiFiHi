@@ -930,8 +930,8 @@ lib/
 - [x] NTP方式の時刻同期（±5ms達成）
 - [x] UDPオーディオパケット送受信
 - [x] クライアント側でのオーディオ再生（一部ポップノイズあり）
+- [x] 手動L/R割り当てが正常動作
 - [ ] 3台のiOSデバイスで安定した同期再生
-- [ ] 手動L/R割り当てが正常動作
 - [ ] 1時間連続再生でドリフトなし
 - [ ] AWS API Gateway + Lambda + DynamoDB デプロイ完了
 - [ ] ユーザー設定の保存/復元が動作
@@ -1589,6 +1589,64 @@ network_optimization:
 - Playback Loop: 5ms interval
 - Look-ahead: 30ms
 ```
+
+---
+
+### 2025-12-25: L/R チャンネル分離機能実装完了
+
+**達成項目:**
+
+1. **チャンネル割り当てプロトコル実装**
+   - `ChannelAssignmentPacket` クラス追加（Magic: "CHAN"）
+   - Host → Client へのチャンネル割り当て送信
+   - Client側での割り当て受信・状態反映
+
+2. **チャンネル分離再生**
+   - ステレオ音声からL/Rチャンネルを抽出
+   - 割り当てられたチャンネルのみをモノラル化して再生
+   - `ChannelSplitter` を利用したサンプル単位の分離
+
+3. **L/Rテスト音源作成**
+   - `lr_test_tone.m4a`: L=440Hz（低音）, R=880Hz（高音）
+   - 10秒間、48kHz ステレオ
+   - チャンネル分離の動作確認用
+
+**修正した主要課題:**
+
+- `Icons.spatial_audio` が存在しない問題 → `Icons.surround_sound` に変更
+- `kAudioUnitErr_FormatNotSupported` エラー → ファイル形式に合わせてプレイヤーを再接続
+- 停止後の再生で音が出ない問題 → `reset()` 削除、エンジン起動状態を確認
+
+**実装詳細:**
+
+```
+チャンネルマスク:
+- 0x01 = Left のみ
+- 0x02 = Right のみ
+- 0x03 = Stereo（両方）
+- 0x04 = Center
+
+パケット構造（ChannelAssignmentPacket）:
+┌────────────┬──────────────┬──────────────┬──────────────┐
+│ Magic (4B) │ ChMask (1B)  │ Volume (1B)  │ Delay (2B)   │
+│ "CHAN"     │ 0x01=L/0x02=R│ 0-100        │ signed ms    │
+└────────────┴──────────────┴──────────────┴──────────────┘
+
+変更ファイル:
+- audio_packet.dart: ChannelAssignmentPacket 追加
+- audio_streamer.dart: sendChannelAssignment(), onChannelAssignment 追加
+- sync_protocol.dart: channelAssignmentStream, _sendChannelAssignmentToClient 追加
+- client_screen.dart: _extractAssignedChannel(), チャンネル表示UI
+- host_screen.dart: L/Rテスト音源選択、デバッグログ
+- AudioEnginePlugin.swift: フォーマット不一致修正、再開処理改善
+```
+
+**残課題:**
+
+- [ ] 一部ポップノイズ（ボツボツ）の解消
+- [ ] セッション状態同期の改善
+- [ ] 複数クライアント（3台以上）でのテスト
+- [ ] Center/5.1ch チャンネル対応（Phase 4）
 
 ---
 
