@@ -1,17 +1,24 @@
 {
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.14.0/.schema/devbox.schema.json",
   "packages": [
-    "jdk17@latest",
+    "nodejs@20",
+    "pnpm@latest",
     "terraform@latest",
-    "awscli2@latest"
+    "awscli2@latest",
+    "postgresql@15"
   ],
   "shell": {
     "init_hook": [
-      "if [ -z \"$ANDROID_HOME\" ]; then if [ -d \"$HOME/Library/Android/sdk\" ]; then export ANDROID_HOME=\"$HOME/Library/Android/sdk\"; elif [ -d \"$HOME/Android/Sdk\" ]; then export ANDROID_HOME=\"$HOME/Android/Sdk\"; fi; fi",
-      "export ANDROID_SDK_ROOT=\"$ANDROID_HOME\"",
-      "echo 'Auracast Hub Development Environment (Terraform/AWS CLI)'",
-      "echo 'Note: For Flutter/iOS, exit devbox shell and use fvm directly'"
+      "echo 'HiFi Audio Platform Development Environment'",
+      "echo 'Node.js:' $(node --version)",
+      "echo 'pnpm:' $(pnpm --version)",
+      "echo 'Terraform:' $(terraform --version | head -1)"
     ],
-    "scripts": {}
+    "scripts": {
+      "dev:frontend": "cd frontend && pnpm dev",
+      "dev:backend": "cd backend && pnpm dev",
+      "db:start": "docker-compose up -d postgres",
+      "db:stop": "docker-compose down"
+    }
   }
 }

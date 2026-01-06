@@ -1,39 +1,25 @@
-# Flutter
-app/build/
-app/.dart_tool/
-app/.packages
-app/.pub-cache/
-app/.pub/
-app/pubspec.lock
+# Dependencies
+node_modules/
+.pnpm-store/
 
-# Android
-app/android/.gradle/
-app/android/app/build/
-app/android/local.properties
-*.apk
-*.aab
+# Build outputs
+.next/
+out/
+dist/
+build/
 
-# iOS
-app/ios/Pods/
-app/ios/.symlinks/
-app/ios/Flutter/Flutter.framework
-app/ios/Flutter/Flutter.podspec
-app/ios/Flutter/App.framework
-
-# Cloud / CDK
-cloud/node_modules/
-cloud/cdk.out/
-cloud/*.js
-cloud/*.d.ts
-!cloud/jest.config.js
+# Environment
+.env
+.env.local
+.env.*.local
+*.tfvars
+!*.tfvars.example
 
 # Terraform
 infrastructure/terraform/.terraform/
 infrastructure/terraform/.terraform.lock.hcl
 infrastructure/terraform/*.tfstate
 infrastructure/terraform/*.tfstate.*
-infrastructure/terraform/*.tfvars
-!infrastructure/terraform/*.tfvars.example
 infrastructure/terraform/crash.log
 infrastructure/terraform/override.tf
 infrastructure/terraform/override.tf.json
@@ -43,6 +29,8 @@ infrastructure/terraform/*_override.tf.json
 # IDE
 .idea/
 .vscode/
+*.swp
+*.swo
 *.iml
 
 # DevBox
@@ -51,9 +39,24 @@ infrastructure/terraform/*_override.tf.json
 # MCP server
 .serena/
 
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Serverless
+.serverless/
+
 # OS
 .DS_Store
 Thumbs.db
 
-# FVM Version Cache
-.fvm/
+# Misc
+*.pem
+*.key
+credentials.json

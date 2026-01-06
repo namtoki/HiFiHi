@@ -14,7 +14,7 @@ HiFi オーディオ機器のデータベース、互換性チェック、価格
 - 機器データベース（スピーカー、アンプ、DAC等）
 - 組み合わせ互換性チェック
 - 基本検索機能
-- Next.js + AWS サーバーレスアーキテクチャ
+- Next.js + Ruby on Rails + AWS アーキテクチャ
 
 ## Tech Stack
 
@@ -25,15 +25,18 @@ HiFi オーディオ機器のデータベース、互換性チェック、価格
 - **CloudFront + S3** for hosting
 
 ### Backend
-- **AWS Lambda** (Node.js)
-- **API Gateway** (REST API)
-- **Aurora PostgreSQL Serverless v2** for main database
-- **DynamoDB** for sessions
+- **Ruby on Rails 8.0** (API mode)
+- **Ruby 3.3**
+- **PostgreSQL** (Aurora Serverless v2)
+- **ECS Fargate** for container hosting
 - **OpenSearch** for search (Phase 2+)
 - **Cognito** for authentication (Phase 3+)
 
 ### Infrastructure
 - **Terraform** for IaC
+- **Docker** for containerization
+- **ECR** for container registry
+- **ALB** for load balancing
 - **GitHub Actions** for CI/CD
 
 ## Development Environment
@@ -55,40 +58,48 @@ aws configure
 # Terraform
 brew install terraform
 
-# Docker (local DB)
+# Docker (required for backend development)
 brew install --cask docker
+# or using Colima
+brew install colima
+colima start
 ```
 
 ### Local Development
 
 ```bash
-# Frontend
+# Start all services (PostgreSQL, Redis, Backend)
+docker-compose up -d
+
+# Frontend only
 cd frontend
 pnpm install
 pnpm dev
 
-# Backend (serverless offline)
-cd backend
-pnpm install
-pnpm dev
-
-# Local PostgreSQL
+# Backend only (with Docker)
 docker-compose up -d postgres
+docker-compose up backend
+
+# Run Rails console
+docker-compose exec backend bundle exec rails console
 ```
 
 ## Common Commands
 
 ```bash
 # Frontend (run from frontend/ directory)
-pnpm dev              # Start dev server
+pnpm dev              # Start dev server (http://localhost:3000)
 pnpm build            # Production build
 pnpm lint             # Run ESLint
 pnpm test             # Run tests
 
-# Backend (run from backend/ directory)
-pnpm dev              # Serverless offline
-pnpm deploy           # Deploy to AWS
-pnpm test             # Run tests
+# Backend (via Docker)
+docker-compose up -d                          # Start all services
+docker-compose exec backend rails db:migrate  # Run migrations
+docker-compose exec backend rails db:seed     # Seed data
+docker-compose exec backend rails console     # Rails console
+docker-compose exec backend rspec             # Run tests
+docker-compose logs -f backend                # View logs
 
 # Terraform (run from infrastructure/terraform/)
 terraform init        # Initialize
@@ -96,9 +107,7 @@ terraform plan        # Preview changes
 terraform apply       # Deploy infrastructure
 
 # Database
-docker-compose up -d postgres   # Start local DB
-pnpm db:migrate                 # Run migrations
-pnpm db:seed                    # Seed data
+docker-compose up -d postgres   # Start local DB only
 ```
 
 ## Architecture
@@ -117,58 +126,65 @@ pnpm db:seed                    # Seed data
 │   │   └── types/               # TypeScript types
 │   └── package.json
 │
-├── backend/                     # Lambda functions
-│   ├── functions/
-│   │   ├── equipment/           # Equipment CRUD
-│   │   ├── price/               # Price crawler & API
-│   │   ├── user/                # User management
-│   │   └── shared/              # Common utilities
-│   └── serverless.yml
+├── backend/                     # Ruby on Rails API
+│   ├── app/
+│   │   ├── controllers/api/     # API controllers
+│   │   ├── models/              # ActiveRecord models
+│   │   └── serializers/         # JSON serializers
+│   ├── config/
+│   │   ├── routes.rb            # API routes
+│   │   └── database.yml         # DB configuration
+│   ├── db/
+│   │   ├── migrate/             # Database migrations
+│   │   └── seeds.rb             # Seed data
+│   ├── Dockerfile               # Production container
+│   └── Gemfile                  # Ruby dependencies
 │
 ├── infrastructure/              # Terraform
 │   └── terraform/
 │       ├── main.tf
-│       ├── rds.tf
-│       ├── lambda.tf
+│       ├── rds.tf               # Aurora PostgreSQL
+│       ├── ecs.tf               # ECS Fargate
+│       ├── ecr.tf               # Container Registry
+│       ├── alb.tf               # Load Balancer
+│       ├── cloudfront.tf        # CDN
 │       └── ...
 │
-└── scripts/                     # Utility scripts
+└── docker-compose.yml           # Local development
 ```
 
-### Database Schema (PostgreSQL)
+### Database Schema (PostgreSQL via Rails Migrations)
 
 Main tables:
 - `categories` - Equipment categories (speaker, amplifier, dac, etc.)
 - `brands` - Audio brands
 - `equipment` - Equipment master with specs (JSONB)
-- `compatibility` - Equipment compatibility scores
+- `compatibilities` - Equipment compatibility scores
+
+Future tables (Phase 2+):
 - `shops` - Online/physical shops
-- `prices` - Price history (partitioned)
-- `user_profiles` - User accounts (Cognito linked)
+- `prices` - Price history
+- `user_profiles` - User accounts
 - `user_systems` - User equipment setups
 - `reviews` - User reviews
 
 ### API Endpoints
 
 ```
+# Categories
+GET    /api/categories              # List all categories
+
+# Brands
+GET    /api/brands                  # List all brands
+GET    /api/brands/:slug            # Brand detail
+
 # Equipment
-GET    /api/equipment                 # List with filters
-GET    /api/equipment/:slug           # Detail
-GET    /api/equipment/:slug/prices    # Prices
-GET    /api/equipment/:slug/compatibility
+GET    /api/equipment               # List with filters
+GET    /api/equipment/:slug         # Detail
+GET    /api/equipment/:slug/compatibility  # Compatibility info
 
 # Search
-GET    /api/search                    # Full-text search
-POST   /api/search/compatibility      # Compatibility search
-
-# Prices
-GET    /api/prices/lowest/:id         # Lowest price
-GET    /api/prices/history/:id        # Price history
-
-# Users (authenticated)
-GET    /api/users/me
-GET    /api/systems
-POST   /api/reviews
+GET    /api/search                  # Full-text search
 ```
 
 ## Development Phases
@@ -185,22 +201,24 @@ POST   /api/reviews
 
 ### Equipment Specs (JSONB)
 
-```typescript
-// Speaker
+```ruby
+# Speaker
 {
-  impedance_ohm: 8,
-  sensitivity_db: 89,
-  frequency_hz: [35, 40000],
-  power_w_min: 30,
-  power_w_max: 150
+  type: "floorstanding",
+  impedanceOhm: 6,
+  sensitivityDb: 88,
+  frequencyHz: [39, 26000],
+  powerWMin: 30,
+  powerWMax: 150
 }
 
-// Amplifier
+# Amplifier
 {
-  output_w_8ohm: 100,
-  output_w_4ohm: 200,
-  thd_percent: 0.05,
-  input_types: ["RCA", "XLR"]
+  type: "integrated",
+  outputW8ohm: 60,
+  outputW4ohm: 80,
+  thdPercent: 0.02,
+  inputTypes: ["RCA", "Optical"]
 }
 ```
 
@@ -211,17 +229,18 @@ Score 1-5 based on:
 - Impedance matching
 - Source compatibility
 
-### Price Crawling (Phase 2)
+### Rails API Conventions
 
-- EventBridge: Daily scheduled crawls
-- SQS: Job queue management
-- Targets: Amazon, Rakuten, Soundhouse, Yodobashi
+- API-only mode (no views/assets)
+- Kaminari for pagination
+- CORS enabled for frontend
+- JSON responses
 
 ## Reference Documentation
 
 The `request.md` file contains detailed specifications:
 - System architecture diagrams
-- Complete database schema (SQL)
+- Complete database schema
 - API design and response examples
 - Terraform configurations
 - Cost estimates per phase
@@ -231,6 +250,6 @@ The `request.md` file contains detailed specifications:
 
 | Phase | Cost |
 |-------|------|
-| Phase 1 MVP | ~$60-110 |
-| Phase 2-3 | ~$185 |
-| Production | ~$400-550 |
+| Phase 1 MVP | ~$80-130 |
+| Phase 2-3 | ~$200 |
+| Production | ~$450-600 |

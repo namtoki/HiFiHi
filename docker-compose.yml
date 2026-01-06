@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: hifi-postgres
+    environment:
+      POSTGRES_DB: hifi_platform_development
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: hifi-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hifi-backend
+    ports:
+      - "3001:3001"
+    environment:
+      RAILS_ENV: development
+      DATABASE_HOST: postgres
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      RAILS_LOG_TO_STDOUT: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - backend_bundle:/usr/local/bundle
+    command: >
+      bash -c "bundle install &&
+               bundle exec rails db:prepare &&
+               bundle exec puma -C config/puma.rb"
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_bundle:
