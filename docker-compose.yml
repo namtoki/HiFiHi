@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15
@@ -29,7 +27,7 @@ services:
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: hifi-backend
     ports:
       - "3001:3001"
@@ -46,7 +44,10 @@ services:
       - ./backend:/app
       - backend_bundle:/usr/local/bundle
     command: >
-      bash -c "bundle install &&
+      bash -c "mkdir -p tmp/pids tmp/cache tmp/sockets log &&
+               bundle config unset deployment &&
+               bundle config unset without &&
+               bundle install &&
                bundle exec rails db:prepare &&
                bundle exec puma -C config/puma.rb"
 

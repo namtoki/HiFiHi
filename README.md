@@ -4,11 +4,11 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    HiFi Audio Platform                       │
-│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────┐ │
-│  │ 機器DB    │  │ 互換性    │  │ 価格比較  │  │ レビュー │ │
-│  │ 検索      │  │ チェック  │  │ 最安表示  │  │ 投稿     │ │
-│  └───────────┘  └───────────┘  └───────────┘  └──────────┘ │
+│                    HiFi Audio Platform                      │
+│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────┐  │
+│  │ 機器DB    │  │ 互換性    │  │ 価格比較  │  │ レビュー │  │
+│  │ 検索      │  │ チェック  │  │ 最安表示  │  │ 投稿     │  │
+│  └───────────┘  └───────────┘  └───────────┘  └──────────┘  │
 └─────────────────────────────────────────────────────────────┘
                             │
            ┌────────────────┼────────────────┐
@@ -58,6 +58,110 @@
 - **OpenSearch** for full-text search (Phase 2+)
 - **Terraform** for IaC
 
+## AWS Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                      AWS Cloud                                      │
+│                                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐    │
+│  │                              Route 53 (DNS)                                 │    │
+│  └────────────────────────────────────┬────────────────────────────────────────┘    │
+│                                       │                                             │
+│                                       ▼                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐    │
+│  │                        CloudFront (CDN)                                     │    │
+│  │                    ┌───────────────┴───────────────┐                        │    │
+│  │                    │                               │                        │    │
+│  └────────────────────┼───────────────────────────────┼────────────────────────┘    │
+│                       │                               │                             │
+│                       ▼                               ▼                             │
+│  ┌────────────────────────────┐      ┌────────────────────────────────────────┐     │
+│  │         S3 Bucket          │      │              VPC                       │     │
+│  │  ┌──────────────────────┐  │      │  ┌──────────────────────────────────┐  │     │
+│  │  │  Frontend (Next.js)  │  │      │  │         Public Subnets           │  │     │
+│  │  │  - Static Assets     │  │      │  │  ┌────────────────────────────┐  │  │     │
+│  │  │  - SSG Pages         │  │      │  │  │    ALB (Load Balancer)     │  │  │     │
+│  │  └──────────────────────┘  │      │  │  │    - HTTPS Termination     │  │  │     │
+│  └────────────────────────────┘      │  │  │    - Health Checks         │  │  │     │
+│                                      │  │  └────────────┬───────────────┘  │  │     │
+│                                      │  └───────────────┼──────────────────┘  │     │
+│                                      │                  │                     │     │
+│                                      │  ┌───────────────┼──────────────────┐  │     │
+│                                      │  │         Private Subnets          │  │     │
+│                                      │  │               │                  │  │     │
+│                                      │  │               ▼                  │  │     │
+│                                      │  │  ┌────────────────────────────┐  │  │     │
+│                                      │  │  │     ECS Fargate Cluster    │  │  │     │
+│                                      │  │  │  ┌──────────────────────┐  │  │  │     │
+│                                      │  │  │  │  Backend (Rails API) │  │  │  │     │
+│                                      │  │  │  │  - Ruby 3.3          │  │  │  │     │
+│                                      │  │  │  │  - Rails 8.0         │  │  │  │     │
+│                                      │  │  │  │  - Puma              │  │  │  │     │
+│                                      │  │  │  └──────────────────────┘  │  │  │     │
+│                                      │  │  └─────────────┬──────────────┘  │  │     │
+│                                      │  │                │                 │  │     │
+│                                      │  │                ▼                 │  │     │
+│                                      │  │  ┌────────────────────────────┐  │  │     │
+│                                      │  │  │  Aurora PostgreSQL         │  │  │     │
+│                                      │  │  │  Serverless v2             │  │  │     │
+│                                      │  │  │  - 機器データ              │  │  │     │
+│                                      │  │  │  - 価格履歴                │  │  │     │
+│                                      │  │  │  - ユーザー情報            │  │  │     │
+│                                      │  │  └────────────────────────────┘  │  │     │
+│                                      │  └──────────────────────────────────┘  │     │
+│                                      └────────────────────────────────────────┘     │
+│                                                                                     │
+│  ┌──────────────────────────────────────────────────────────────────────────────┐   │
+│  │                          Supporting Services                                 │   │
+│  │                                                                              │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │   │
+│  │  │     ECR     │  │   Cognito   │  │ OpenSearch  │  │    ElastiCache      │  │   │
+│  │  │  Container  │  │    User     │  │   Search    │  │      (Redis)        │  │   │
+│  │  │  Registry   │  │    Pool     │  │   Engine    │  │   Price Cache       │  │   │
+│  │  │             │  │  (Phase 3+) │  │  (Phase 2+) │  │    (Phase 2+)       │  │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘  │   │
+│  │                                                                              │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │   │
+│  │  │ EventBridge │  │     SQS     │  │   Lambda    │  │    CloudWatch       │  │   │
+│  │  │  Scheduler  │  │   Queue     │  │  Crawlers   │  │   Logs/Metrics      │  │   │
+│  │  │  (Phase 2+) │  │  (Phase 2+) │  │  (Phase 2+) │  │                     │  │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘  │   │
+│  └──────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+                                       │
+                                       │ Price Data
+                                       ▼
+                    ┌──────────────────────────────────────┐
+                    │          External APIs               │
+                    │  ┌────────┐ ┌────────┐ ┌──────────┐  │
+                    │  │ Amazon │ │ 楽天   │ │サウンド  │  │
+                    │  │  API   │ │  API   │ │ハウス等  │  │
+                    │  └────────┘ └────────┘ └──────────┘  │
+                    └──────────────────────────────────────┘
+```
+
+### Component Summary
+
+| Layer | Component | AWS Service | Phase |
+|-------|-----------|-------------|-------|
+| **CDN** | 静的配信・キャッシュ | CloudFront | 1 |
+| **DNS** | ドメイン管理 | Route 53 | 1 |
+| **Frontend** | Next.js アプリ | S3 | 1 |
+| **Load Balancer** | API ルーティング | ALB | 1 |
+| **Backend** | Rails API | ECS Fargate | 1 |
+| **Container Registry** | Docker イメージ | ECR | 1 |
+| **Database** | メインDB | Aurora PostgreSQL Serverless v2 | 1 |
+| **Search** | 全文検索 | OpenSearch | 2 |
+| **Cache** | 価格キャッシュ | ElastiCache (Redis) | 2 |
+| **Scheduler** | 定期実行 | EventBridge | 2 |
+| **Queue** | ジョブ管理 | SQS | 2 |
+| **Crawler** | 価格収集 | Lambda | 2 |
+| **Auth** | ユーザー認証 | Cognito | 3 |
+| **Monitoring** | ログ・メトリクス | CloudWatch | 1 |
+
 ## Requirements
 
 - Node.js 20+
@@ -71,43 +175,25 @@
 ### 1. 開発環境のセットアップ
 
 ```bash
-# Node.js (v20+)
-nvm install 20
-nvm use 20
+# devbox shell で必要なツールが全て揃います
+# (Node.js 20, pnpm, Terraform, AWS CLI, Colima, Docker Compose)
+devbox shell
 
-# pnpm
-npm install -g pnpm
-
-# Docker (Colima推奨)
-brew install colima
-colima start
-
-# AWS CLI
-brew install awscli
+# AWS認証情報の設定（初回のみ）
 aws configure
-
-# Terraform
-brew install terraform
 ```
 
 ### 2. ローカル開発
 
 ```bash
-# リポジトリクローン
-git clone https://github.com/namtoki/HiFiHi
-cd HiFiHi
-
-# 全サービス起動（PostgreSQL, Redis, Rails）
+# Backend
 docker-compose up -d
 
-# フロントエンド（別ターミナル）
+# Frontend
 cd frontend
 pnpm install
 pnpm dev
 ```
-
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:3001/api
 
 ### 3. データベースセットアップ
 
@@ -126,49 +212,6 @@ cd infrastructure/terraform
 terraform init
 terraform plan
 terraform apply
-```
-
-## Project Structure
-
-```
-/HiFiHi
-├── frontend/                    # Next.js application
-│   ├── src/
-│   │   ├── app/                 # App Router pages
-│   │   ├── components/          # React components
-│   │   ├── hooks/               # Custom hooks
-│   │   ├── lib/                 # Utilities
-│   │   ├── services/            # API clients
-│   │   └── types/               # TypeScript types
-│   └── package.json
-│
-├── backend/                     # Ruby on Rails API
-│   ├── app/
-│   │   ├── controllers/api/     # API controllers
-│   │   ├── models/              # ActiveRecord models
-│   │   └── serializers/         # JSON serializers
-│   ├── config/
-│   │   ├── routes.rb            # API routes
-│   │   └── database.yml         # DB configuration
-│   ├── db/
-│   │   ├── migrate/             # Database migrations
-│   │   └── seeds.rb             # Seed data
-│   ├── Dockerfile               # Production container
-│   └── Gemfile                  # Ruby dependencies
-│
-├── infrastructure/              # Terraform
-│   └── terraform/
-│       ├── main.tf              # Provider configuration
-│       ├── vpc.tf               # VPC, subnets
-│       ├── rds.tf               # Aurora PostgreSQL
-│       ├── ecs.tf               # ECS Fargate
-│       ├── ecr.tf               # Container registry
-│       ├── alb.tf               # Load balancer
-│       ├── s3.tf                # S3 buckets
-│       ├── cloudfront.tf        # CDN
-│       └── outputs.tf           # Output values
-│
-└── docker-compose.yml           # Local development
 ```
 
 ## Database Schema
