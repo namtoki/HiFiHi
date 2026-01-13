@@ -10,7 +10,7 @@
         "--context",
         "ide-assistant",
         "--project",
-        "/Users/tanamura/ghq/github.com/namtoki/HiFiHi"
+        "."
       ],
       "env": {}
     },
