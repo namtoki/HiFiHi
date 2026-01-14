@@ -1,31 +1,31 @@
 # HiFi Audio Platform
 
-オーディオ機器データベース＆価格比較プラットフォーム。HiFi オーディオ機器の互換性チェックと複数ショップの最安価格を一括表示します。
+Audio equipment database & price comparison platform. Check compatibility of HiFi audio equipment and display the lowest prices from multiple shops at a glance.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    HiFi Audio Platform                      │
 │  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────┐  │
-│  │ 機器DB    │  │ 互換性    │  │ 価格比較  │  │ レビュー │  │
-│  │ 検索      │  │ チェック  │  │ 最安表示  │  │ 投稿     │  │
+│  │ Equipment │  │ Compati-  │  │   Price   │  │  Review  │  │
+│  │ Database  │  │  bility   │  │Comparison │  │  Posts   │  │
 │  └───────────┘  └───────────┘  └───────────┘  └──────────┘  │
 └─────────────────────────────────────────────────────────────┘
                             │
            ┌────────────────┼────────────────┐
            ▼                ▼                ▼
      ┌──────────┐     ┌──────────┐     ┌──────────┐
-     │  Amazon  │     │  楽天    │     │サウンド  │
-     │          │     │          │     │ハウス    │
+     │  Amazon  │     │ Rakuten  │     │  Sound   │
+     │          │     │          │     │  House   │
      └──────────┘     └──────────┘     └──────────┘
 ```
 
 ## Features
 
-- **機器データベース**: スピーカー、アンプ、DAC等のスペック検索
-- **互換性チェック**: インピーダンス・出力マッチングによる相性診断
-- **価格比較**: 複数ショップの最安値を自動収集・表示
-- **レビュー**: ユーザーによる機器レビュー・マイシステム公開
-- **店舗情報**: 実店舗での視聴可能機器・地図連携
+- **Equipment Database**: Search specs for speakers, amplifiers, DACs, etc.
+- **Compatibility Check**: Compatibility diagnosis based on impedance and output matching
+- **Price Comparison**: Automatically collect and display lowest prices from multiple shops
+- **Reviews**: User equipment reviews and my-system sharing
+- **Shop Info**: Audition-available equipment at physical stores with map integration
 
 ## Development Phases
 
